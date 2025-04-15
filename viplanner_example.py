@@ -7,15 +7,15 @@ from viplanner.viplanner.config.learning_cfg import TrainCfg
 import numpy as np
 from PIL import Image
 
-VI_PLANNER_WEIGHT_PATH = "models/viplanner.pt"
-VI_PLANNER_CONFIG_PATH = "models/viplannerconfig.yaml"
-DATA_PATH = "/scratch/minh/school/282_project/carla"
+VI_PLANNER_WEIGHT_PATH = "models/model.pt"
+VI_PLANNER_CONFIG_PATH = "models/model.yaml"
+DATA_PATH = "samples"
 
-DEVICE = 'cuda:4' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
+DEVICE = 'cpu'
 
 def get_models(device):
     vi_model = DualAutoEncoder(train_cfg=TrainCfg.from_yaml(VI_PLANNER_CONFIG_PATH))
-    vi_state_dict, _ = torch.load(VI_PLANNER_WEIGHT_PATH)
+    vi_state_dict, _ = torch.load(VI_PLANNER_WEIGHT_PATH, map_location=torch.device('cpu'))
 
     # remove all keys that start with encoder_sem because these are preloaded by Mask2Former
     # for key in list(vi_state_dict.keys()):
