@@ -6,6 +6,61 @@ from viplanner.viplanner.config import TrainCfg
 from viplanner.viplanner.plannernet import AutoEncoder, DualAutoEncoder
 from viplanner.viplanner.traj_cost_opt.traj_opt import TrajOpt
 
+import utils
+from PIL import Image
+
+###
+# Quaternion Utilities
+###
+
+def quat_inv(q: torch.Tensor) -> torch.Tensor:
+    """Invert a quaternion."""
+    q_conj = q.clone()
+    q_conj[..., :3] *= -1  # Negate the vector part
+    return q_conj
+
+def quat_apply(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    """Apply a quaternion rotation to a vector."""
+    q_xyz = q[..., :3]
+    q_w = q[..., 3:4]
+
+    # Compute cross products
+    t = 2 * torch.cross(q_xyz, v, dim=-1)
+    v_rotated = v + q_w * t + torch.cross(q_xyz, t, dim=-1)
+    return v_rotated
+
+def preprocess_training_images(DATA_PATH: str, img_number: int, device):
+    """
+    Preprocess images taken from training script to be passed into the model
+    """
+    # Load and process images from training data. Need to reshape to add batch dimension in front
+    depth_image_file = f"{DATA_PATH}/depth/{img_number:04d}.npy"
+    sem_image_file = f"{DATA_PATH}/semantics/{img_number:04d}.png"
+    depth_image = np.load(depth_image_file)
+    depth_image = np.array(depth_image, dtype=np.float32)
+    sem_image = np.array(Image.open(sem_image_file), dtype=np.float32)
+    # turn into torch tensors
+    depth_image = torch.tensor(depth_image, device=device)
+    sem_image = torch.tensor(sem_image, device=device)
+    # reshape to add batch dimension
+    depth_image = torch.reshape(depth_image, (1, depth_image.shape[0], depth_image.shape[1], depth_image.shape[2]))
+    sem_image = torch.reshape(sem_image, (1, sem_image.shape[0], sem_image.shape[1], sem_image.shape[2]))
+    depth_image = depth_image.permute(0, 3, 1, 2)
+    sem_image = sem_image.permute(0, 3, 1, 2)
+
+    return depth_image, sem_image
+
+def transform_goal(CAMERA_CFG_PATH: str, goals: torch.Tensor, image_number: int, device):
+    """
+    Transform goasl into camera frame
+    """
+    # Load camera extrinsics collected during training
+    cam_pos, cam_quat = utils.load_camera_extrinsics(CAMERA_CFG_PATH, image_number, device=device)
+    # transform goal to camera frame
+    goal_cam_frame = goals - cam_pos
+    goal_cam_frame[:, 2] = 0  # trained with z difference of 0
+    goal_cam_frame = quat_apply(quat_inv(cam_quat), goal_cam_frame)
+    return goal_cam_frame
 
 class VIPlannerAlgo:
     def __init__(self, model_dir: str, fear_threshold: float = 0.5, device: str = "cuda"):
@@ -104,28 +159,6 @@ class VIPlannerAlgo:
         image[image > self.max_depth] = 0.0
         image[~torch.isfinite(image)] = 0  # set all inf or nan values to 0
         return image
-
-    ###
-    # Quaternion Utilities
-    ###
-
-    @staticmethod
-    def quat_inv(q: torch.Tensor) -> torch.Tensor:
-        """Invert a quaternion."""
-        q_conj = q.clone()
-        q_conj[..., :3] *= -1  # Negate the vector part
-        return q_conj
-
-    @staticmethod
-    def quat_apply(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
-        """Apply a quaternion rotation to a vector."""
-        q_xyz = q[..., :3]
-        q_w = q[..., 3:4]
-
-        # Compute cross products
-        t = 2 * torch.cross(q_xyz, v, dim=-1)
-        v_rotated = v + q_w * t + torch.cross(q_xyz, t, dim=-1)
-        return v_rotated
 
     ###
     # Planning

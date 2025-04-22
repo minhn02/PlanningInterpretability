@@ -1,0 +1,9 @@
+viplanner:
+  model_path: "/scratch/minh/school/282_project/PlanningInterpretability/models"
+  data_path: "/scratch/minh/school/282_project/carla"
+  camera_cfg_path: "/scratch/minh/school/282_project/carla/camera_extrinsic.txt"
+  device: "cuda"
+
+hydra:
+  run:
+    dir: .
