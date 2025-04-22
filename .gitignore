@@ -1,2 +1,6 @@
 models/
 __pycache__
+.hydra
+outputs
+viplanner/
+*.log
