@@ -32,7 +32,7 @@ class CostMapPCD:
     ):
         # determine device
         if torch.cuda.is_available() and gpu_id is not None:
-            self.device = torch.device("cuda:" + str(gpu_id))
+            self.device = torch.device("cuda:" + str(6))
         else:
             self.device = torch.device("cpu")
 

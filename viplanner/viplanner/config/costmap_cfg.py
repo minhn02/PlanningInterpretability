@@ -63,9 +63,9 @@ class ReconstructionCfg:
     """
 
     # directory where the environment with the depth (and semantic) images is located
-    data_dir: str = "${USER_PATH_TO_DATA}"  # e.g. "<path-to-repo>/omniverse/extension/omni.viplanner/data/warehouse"
+    data_dir: str = "/scratch/minh/school/282_project"  # e.g. "<path-to-repo>/omniverse/extension/omni.viplanner/data/warehouse"
     # environment name
-    env: str = "warehouse_new"  # has to be adjusted
+    env: str = "carla"  # has to be adjusted
     # image suffix
     depth_suffix = ""
     sem_suffix = ""
@@ -73,9 +73,9 @@ class ReconstructionCfg:
     high_res_depth: bool = False
 
     # reconstruction parameters
-    voxel_size: float = 0.05  # [m] 0.05 for matterport 0.1 for carla
+    voxel_size: float = 0.1  # [m] 0.05 for matterport 0.1 for carla
     start_idx: int = 0  # start index for reconstruction
-    max_images: Optional[int] = 1000  # maximum number of images to reconstruct, if None, all images are used
+    max_images: Optional[int] = 10  # maximum number of images to reconstruct, if None, all images are used
     depth_scale: float = 1000  # depth scale factor
     # semantic reconstruction
     semantics: bool = True
@@ -115,14 +115,14 @@ class SemCostMapConfig:
     sigma_smooth: float = 2.5
     max_iterations: int = 1
     # obstacle threshold  (multiplied with highest loss value defined for a semantic class)
-    obstacle_threshold: float = 0.5  # 0.5/ 0.6 for matterport, 0.8 for carla
+    obstacle_threshold: float = 0.8  # 0.5/ 0.6 for matterport, 0.8 for carla
     # negative reward for space with smallest cost (introduces a gradient in area with smallest loss value, steering towards center)
     # NOTE: at the end cost map is elevated by that amount to ensure that the smallest cost is 0
     negative_reward: float = 0.5
     # loss values rounded up to decimal #round_decimal_traversable equal to 0.0 are selected and the traversable gradient is determined based on them
     round_decimal_traversable: int = 2
     # compute height map
-    compute_height_map: bool = False  # false for matterport, true for carla and nomoko
+    compute_height_map: bool = True  # false for matterport, true for carla and nomoko
 
 
 @dataclass
@@ -149,22 +149,22 @@ class GeneralCostMapConfig:
     """General Cost Map Configuration"""
 
     # path to point cloud
-    root_path: str = "<path-to-data>/<env-name>"
+    root_path: str = "/scratch/minh/school/282_project/carla"
     ply_file: str = "cloud.ply"
     # resolution of the cost map
-    resolution: float = 0.04  # [m]  (0.04 for matterport, 0.1 for carla)
+    resolution: float = 0.1  # [m]  (0.04 for matterport, 0.1 for carla)
     # map parameters
     clear_dist: float = 1.0  # cost map expansion over the point cloud space (prevent paths to go out of the map)
     # smoothing parameters
     sigma_smooth: float = 3.0
     # cost map expansion
-    x_min: Optional[float] = None
+    x_min: Optional[float] = -8.05
     # [m] if None, the minimum of the point cloud is used None (carla town01:  -8.05   matterport: None)
-    y_min: Optional[float] = None
+    y_min: Optional[float] = -8.05
     # [m] if None, the minimum of the point cloud is used None (carla town01:  -8.05   matterport: None)
-    x_max: Optional[float] = None
+    x_max: Optional[float] = 346.22
     # [m] if None, the maximum of the point cloud is used None (carla town01:  346.22  matterport: None)
-    y_max: Optional[float] = None
+    y_max: Optional[float] = 336.65
     # [m] if None, the maximum of the point cloud is used None (carla town01:  336.65  matterport: None)
 
 

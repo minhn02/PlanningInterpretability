@@ -67,7 +67,7 @@ def transform_goal(CAMERA_CFG_PATH: str, goals: torch.Tensor, image_number: int,
     return goal_cam_frame
 
 class VIPlannerAlgo:
-    def __init__(self, model_dir: str, fear_threshold: float = 0.5, device: str = "cuda"):
+    def __init__(self, model_dir: str, fear_threshold: float = 0.5, device: str = "cuda", eval=True):
         """Apply VIPlanner Algorithm
 
         Args:
@@ -85,7 +85,7 @@ class VIPlannerAlgo:
 
         # Load model
         self.train_config: TrainCfg = None
-        self.load_model(model_dir)
+        self.load_model(model_dir, eval=eval)
 
         # Get transforms for images
         self.transform = transforms.Resize(self.train_config.img_input_size, antialias=None)
@@ -98,7 +98,7 @@ class VIPlannerAlgo:
         self.color_path = (0.4, 1.0, 0.1)  # green
         self.size = 5.0
 
-    def load_model(self, model_dir: str):
+    def load_model(self, model_dir: str, eval=True):
         """Load the model and its configuration."""
         # Load training configuration
         self.train_config: TrainCfg = TrainCfg.from_yaml(os.path.join(model_dir, "model.yaml"))
@@ -128,7 +128,8 @@ class VIPlannerAlgo:
         self.net.load_state_dict(model_state_dict)
 
         # Set model to evaluation mode
-        self.net.eval()
+        if eval:
+            self.net.eval()
 
         # Move model to the appropriate device
         if self.device.lower() == "cpu":
@@ -176,12 +177,15 @@ class VIPlannerAlgo:
 
         return keypoints, traj, fear
 
-    def plan_dual(self, dep_image: torch.Tensor, sem_image: torch.Tensor, goal_robot_frame: torch.Tensor) -> tuple:
+    def plan_dual(self, dep_image: torch.Tensor, sem_image: torch.Tensor, goal_robot_frame: torch.Tensor, no_grad=True) -> tuple:
         """Plan a trajectory using depth and semantic images."""
         # Transform input
         sem_image = self.transform(sem_image) / 255
-        with torch.no_grad():
-            keypoints, fear = self.net(self.input_transformer(dep_image), sem_image, goal_robot_frame)
+        if no_grad:
+            with torch.no_grad():
+                keypoints, fear = self.net(self.input_transformer(dep_image), sem_image, goal_robot_frame)
+        else:
+            keypoints, fear = self.net(dep_image, sem_image, goal_robot_frame)
         traj = self.traj_generate.TrajGeneratorFromPFreeRot(keypoints, step=0.1)
 
         return keypoints, traj, fear
