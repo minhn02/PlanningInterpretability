@@ -41,6 +41,7 @@ def get_image_batches(cfg: DictConfig):
     return depth_img, sem_img
 
 
+# This function was generated, in part, using ChatGPT
 def compute_semantic_features(rgb_sem):
     """
     Compute interpretable features from semantic RGB images and metadata.
@@ -134,7 +135,7 @@ def compute_semantic_features(rgb_sem):
     return features_tensor
 
 
-
+# This function was generated, in part, using ChatGPT
 def compute_depth_features(depth_batch, num_hist_bins=20):
     """
     Compute rich scalar features from a batch of depth images.
