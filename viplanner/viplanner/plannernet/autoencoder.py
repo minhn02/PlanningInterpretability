@@ -50,6 +50,8 @@ class DualAutoEncoder(nn.Module):
         return
 
     def forward(self, x_depth: torch.Tensor, x_sem: torch.Tensor, goal: torch.Tensor):
+        print("autoencoder depth shape", x_depth.shape)
+        print("autoencoder sem shape", x_sem.shape)
         # encode depth
         x_depth = x_depth.expand(-1, 3, -1, -1)
         x_depth = self.encoder_depth(x_depth)
