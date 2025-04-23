@@ -4,12 +4,15 @@ import hydra
 import os
 from omegaconf import DictConfig
 
+from collections import defaultdict
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
 import torch.nn.functional as F
 from scipy.stats import skew, kurtosis, entropy
 import numpy as np
+
+from viplanner.viplanner.config.viplanner_sem_meta import VIPLANNER_SEM_META
 
 
 IMAGE_COUNT = 1000
@@ -36,6 +39,100 @@ def get_image_batches(cfg: DictConfig):
     depth_img = torch.cat(depth_images, axis=0)
     sem_img = torch.cat(sem_images, axis=0)
     return depth_img, sem_img
+
+
+def compute_semantic_features(rgb_sem):
+    """
+    Compute interpretable features from semantic RGB images and metadata.
+
+    Args:
+        rgb_sem (torch.Tensor): [N, 3, H, W] RGB-labeled semantic maps
+
+    Returns:
+        torch.Tensor of shape [N, F]
+    """
+    N, _, H, W = rgb_sem.shape
+    device = rgb_sem.device
+
+    # Preprocess metadata
+    color_to_loss = {}
+    color_to_ground = {}
+    loss_to_index = {}
+    class_colors = []
+
+    for i, meta in enumerate(VIPLANNER_SEM_META):
+        color = tuple(meta['color'])
+        color_to_loss[color] = meta['loss']
+        color_to_ground[color] = meta['ground']
+        if meta['loss'] not in loss_to_index:
+            loss_to_index[meta['loss']] = len(loss_to_index)
+        class_colors.append(color)
+
+    # Convert RGB images to class index maps
+    rgb_np = (rgb_sem.permute(0, 2, 3, 1) * 255).byte().cpu().numpy()  # [N, H, W, 3]
+
+    # Init storage
+    features = []
+
+    for i in range(N):
+        img = rgb_np[i]
+        H, W, _ = img.shape
+        img_flat = img.reshape(-1, 3)
+
+        total_pixels = H * W
+        loss_counts = defaultdict(int)
+        ground_count = 0
+        class_counts = defaultdict(int)
+
+        for pixel in img_flat:
+            pixel_tuple = tuple(pixel.tolist())
+            if pixel_tuple in color_to_loss:
+                loss_val = color_to_loss[pixel_tuple]
+                ground_val = color_to_ground[pixel_tuple]
+                loss_counts[loss_val] += 1
+                if ground_val:
+                    ground_count += 1
+                class_counts[pixel_tuple] += 1
+            else:
+                # Unrecognized pixel class (e.g. black or undefined)
+                continue
+
+        # Convert counts to normalized proportions
+        loss_props = [loss_counts.get(loss, 0) / total_pixels for loss in sorted(loss_to_index)]
+        ground_prop = ground_count / total_pixels
+        nonground_prop = 1.0 - ground_prop
+
+        # Ratios
+        ratios = []
+        if loss_counts.get(0, 0) > 0:  # avoid divide-by-zero
+            ratios.append(loss_counts.get(2.0, 0) / loss_counts[0])  # obstacle / traversable_intended
+            ratios.append(loss_counts.get(1.5, 0) / loss_counts[0])  # road / traversable_intended
+        else:
+            ratios += [0.0, 0.0]
+
+        if nonground_prop > 0:
+            ratios.append(ground_prop / nonground_prop)
+        else:
+            ratios.append(0.0)
+
+        # Entropy over class counts
+        class_freqs = np.array(list(class_counts.values()), dtype=np.float32)
+        class_probs = class_freqs / class_freqs.sum() if class_freqs.sum() > 0 else class_freqs
+        class_entropy = entropy(class_probs + 1e-8)
+
+        # Dominant class loss
+        if class_counts:
+            dominant_class = max(class_counts, key=class_counts.get)
+            dominant_loss = color_to_loss[dominant_class]
+        else:
+            dominant_loss = 0.0
+
+        # Final feature vector for image i
+        features.append(loss_props + [ground_prop, nonground_prop] + ratios + [class_entropy, dominant_loss])
+
+    features_tensor = torch.tensor(features, dtype=torch.float32, device=device)  # [N, F]
+    return features_tensor
+
 
 
 def compute_depth_features(depth_batch, num_hist_bins=20):
@@ -152,7 +249,15 @@ def analyze(cfg: DictConfig):
         depth_features = compute_depth_features(depth_batch)
         torch.save(depth_features, "checkpoints/depth_features.pt")
 
-    print("depth features shape", features.shape)
+    if os.path.exists("checkpoints/sem_features.pt"):
+        sem_features = torch.load("checkpoints/sem_features.pt")
+    else:
+        depth_batch, sem_batch = get_image_batches(cfg)
+        sem_features = compute_semantic_features(sem_batch)
+        torch.save(sem_features, "checkpoints/sem_features.pt")
+
+    print("depth features shape", depth_features.shape)
+    print("sem features shape", sem_features.shape)
     print("features shape", features.shape)
     pooled = features.mean(dim=(-2, -1))
     print("pooled shape", pooled.shape)
@@ -165,21 +270,28 @@ def analyze(cfg: DictConfig):
     tsne = TSNE(n_components=2, perplexity=30)
     tsne_proj = tsne.fit_transform(pooled.cpu().numpy())
 
-    # Plotting over depth features
-    _, depth_feature_count = depth_features.shape
+    # Plotting over generated features
+    generated_features = torch.cat((depth_features, sem_features), axis=1)
+    _, gen_feature_count = generated_features.shape
     depth_feature_names = [
         "mean", "std", "min", "max", "skewness", "kurt", "0.1 quantile", 
         "0.25 quantile", "0.5 quantile", "0.75 quantile", "0.9 quantile", 
         "entropy", "grad x mean", "grad x std", "grad y mean", 
         "grad y std", "grad mag mean", "grad mag std",
     ]
-    for depth_feature in range(depth_feature_count):
-        plt.scatter(projected[:, 0], projected[:, 1], c=depth_features[:, depth_feature])
-        plt.title(f"PCA of encoder features, labeled by {depth_feature_names[depth_feature]}")
+    sem_feature_names = [
+        "traversable intended prop", "traversable unintended prop", "terrain prop",
+        "road prop", "obstacle prop", "ground prop", "nonground prop", "obstacle vs traversable ratio",
+        "road vs traversable ratio", "ground vs nonground ratio", "semantic entropy", "dominant loss"
+    ]
+    gen_feature_names = ["depth " + dfn for dfn in depth_feature_names] + sem_feature_names
+    for gen_feature in range(gen_feature_count):
+        plt.scatter(projected[:, 0], projected[:, 1], c=generated_features[:, gen_feature])
+        plt.title(f"PCA of encoder features, labeled by {gen_feature_names[gen_feature]}")
         plt.show()
 
-        plt.scatter(tsne_proj[:, 0], tsne_proj[:, 1], c=depth_features[:, depth_feature])
-        plt.title(f"TSNE of encoder features, labeled by {depth_feature_names[depth_feature]}")
+        plt.scatter(tsne_proj[:, 0], tsne_proj[:, 1], c=generated_features[:, gen_feature])
+        plt.title(f"TSNE of encoder features, labeled by {gen_feature_names[gen_feature]}")
         plt.show()
 
 
