@@ -1,8 +1,8 @@
 viplanner:
-  model_path: "/scratch/minh/school/282_project/PlanningInterpretability/models"
-  data_path: "/scratch/minh/school/282_project/carla"
-  camera_cfg_path: "/scratch/minh/school/282_project/carla/camera_extrinsic.txt"
-  device: "cuda"
+  model_path: "/Users/ryan/Desktop/python/182/PlanningInterpretability/models"
+  data_path: "/Users/ryan/Desktop/python/182/carla"
+  camera_cfg_path: "/Users/ryan/Desktop/python/182/carla/camera_extrinsic.txt"
+  device: "cpu"
 
 hydra:
   run:

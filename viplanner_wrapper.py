@@ -39,9 +39,13 @@ def preprocess_training_images(DATA_PATH: str, img_number: int, device):
     depth_image = np.load(depth_image_file)
     depth_image = np.array(depth_image, dtype=np.float32)
     sem_image = np.array(Image.open(sem_image_file), dtype=np.float32)
+    
     # turn into torch tensors
-    depth_image = torch.tensor(depth_image, device=device)
-    sem_image = torch.tensor(sem_image, device=device)
+    # depth_image = torch.tensor(depth_image, device=device)
+    # sem_image = torch.tensor(sem_image, device=device)
+    depth_image = torch.from_numpy(depth_image).to(device)
+    sem_image = torch.from_numpy(sem_image).to(device)
+    
     # reshape to add batch dimension
     depth_image = torch.reshape(depth_image, (1, depth_image.shape[0], depth_image.shape[1], depth_image.shape[2]))
     sem_image = torch.reshape(sem_image, (1, sem_image.shape[0], sem_image.shape[1], sem_image.shape[2]))
