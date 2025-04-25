@@ -7,16 +7,27 @@ from omegaconf import DictConfig
 from collections import defaultdict
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
-import matplotlib.pyplot as plt
+from sklearn.linear_model import LinearRegression
 import torch.nn.functional as F
 from scipy.stats import skew, kurtosis, entropy
 import numpy as np
+import matplotlib.pyplot as plt
 
 from viplanner.viplanner.config.viplanner_sem_meta import VIPLANNER_SEM_META
 
 
 IMAGE_COUNT = 1000
 BATCH_SIZE = 25
+
+
+def add_featurewise_noise(X, scale=0.1):
+    """
+    X: [N, D] torch.Tensor
+    scale: scalar float, how much of each feature's std to use as noise std
+    """
+    stds = X.std(dim=0, keepdim=True)  # [1, D]
+    noise = torch.randn_like(X) * stds * scale
+    return X + noise
 
 
 def get_image_batches(cfg: DictConfig):
@@ -286,6 +297,10 @@ def analyze(cfg: DictConfig):
         "road vs traversable ratio", "ground vs nonground ratio", "semantic entropy", "dominant loss"
     ]
     gen_feature_names = ["depth " + dfn for dfn in depth_feature_names] + sem_feature_names
+    """
+    noisy_features_predict = add_featurewise_noise(generated_features, scale=0.25)
+    noisy_features_score = add_featurewise_noise(generated_features, scale=0.25)
+    """
     for gen_feature in range(gen_feature_count):
         plt.scatter(projected[:, 0], projected[:, 1], c=generated_features[:, gen_feature])
         plt.title(f"PCA of encoder features, labeled by {gen_feature_names[gen_feature]}")
@@ -294,6 +309,17 @@ def analyze(cfg: DictConfig):
         plt.scatter(tsne_proj[:, 0], tsne_proj[:, 1], c=generated_features[:, gen_feature])
         plt.title(f"TSNE of encoder features, labeled by {gen_feature_names[gen_feature]}")
         plt.show()
+
+        """
+        # Note: Linear Probing currently overfitting, more samples needed.
+        # Skip NaN features
+        if gen_feature_names[gen_feature] in ["depth skewness", "depth kurt"]:
+            continue
+        reg = LinearRegression()
+        reg.fit(pooled.cpu().numpy(), noisy_features_predict[:, gen_feature].cpu().numpy())
+        score = reg.score(pooled.cpu().numpy(), noisy_features_score[:, gen_feature].cpu().numpy())
+        print(f"R² score for {gen_feature_names[gen_feature]}:", score)
+        """
 
 
 if __name__ == '__main__':
