@@ -4,10 +4,12 @@ import hydra
 import os
 from omegaconf import DictConfig
 
+from typing import List, Optional, Tuple
 from collections import defaultdict
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
 import torch.nn.functional as F
 from scipy.stats import skew, kurtosis, entropy
 import numpy as np
@@ -20,17 +22,7 @@ IMAGE_COUNT = 1000
 BATCH_SIZE = 25
 
 
-def add_featurewise_noise(X, scale=0.1):
-    """
-    X: [N, D] torch.Tensor
-    scale: scalar float, how much of each feature's std to use as noise std
-    """
-    stds = X.std(dim=0, keepdim=True)  # [1, D]
-    noise = torch.randn_like(X) * stds * scale
-    return X + noise
-
-
-def get_image_batches(cfg: DictConfig):
+def get_image_batches(cfg: DictConfig)-> Tuple[torch.tensor, torch.tensor]:
     model_path = cfg.viplanner.model_path
     data_path = cfg.viplanner.data_path
     camera_cfg_path = cfg.viplanner.camera_cfg_path
@@ -53,7 +45,7 @@ def get_image_batches(cfg: DictConfig):
 
 
 # This function was generated, in part, using ChatGPT
-def compute_semantic_features(rgb_sem):
+def compute_semantic_features(rgb_sem: torch.tensor) -> torch.tensor:
     """
     Compute interpretable features from semantic RGB images and metadata.
 
@@ -147,7 +139,7 @@ def compute_semantic_features(rgb_sem):
 
 
 # This function was generated, in part, using ChatGPT
-def compute_depth_features(depth_batch, num_hist_bins=20):
+def compute_depth_features(depth_batch: torch.tensor, num_hist_bins: int = 20) -> torch.tensor:
     """
     Compute rich scalar features from a batch of depth images.
     
@@ -221,7 +213,7 @@ def compute_depth_features(depth_batch, num_hist_bins=20):
     return features
 
 
-def get_features(cfg: DictConfig):
+def get_features(cfg: DictConfig) -> torch.tensor:
     depth_img, sem_img = get_image_batches(cfg)
     print("processed depth size", depth_img.shape)
     print("processed sem size", sem_img.shape)
@@ -243,6 +235,89 @@ def get_features(cfg: DictConfig):
             features_batches.append(features)
     features = torch.cat(features_batches, axis=0)
     return features
+
+
+# This function was generated, in part, using ChatGPT
+def train_test_split_tensors(
+    pooled: torch.Tensor, 
+    hand_features: torch.Tensor, 
+    test_size: float = 0.2, 
+    seed: int = 42,
+) -> Tuple[torch.tensor, torch.tensor, torch.tensor, torch.tensor]:
+    pooled_np = pooled.cpu().numpy()
+    hand_np = hand_features.cpu().numpy()
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        pooled_np, hand_np, test_size=test_size, random_state=seed
+    )
+
+    X_train = torch.tensor(X_train, dtype=pooled.dtype)
+    X_test = torch.tensor(X_test, dtype=pooled.dtype)
+    y_train = torch.tensor(y_train, dtype=hand_features.dtype)
+    y_test = torch.tensor(y_test, dtype=hand_features.dtype)
+
+    return X_train, X_test, y_train, y_test
+
+
+# This function was generated, in part, using ChatGPT
+def visualize_lin_reg_weights(reg: LinearRegression, feature_name: str):
+    weights = np.asarray(reg.coef_)
+    heatmap = weights.reshape(32, 32)
+    plt.figure(figsize=(6, 6))
+    plt.imshow(heatmap, cmap="viridis")
+    plt.colorbar(label="Weight Magnitude")
+    plt.title(f"Linear Regression weights by channel for {feature_name}")
+    plt.axis('off')
+    plt.tight_layout()
+    plt.show()
+
+
+def visualize_pca_and_tsne(
+    pooled: torch.tensor, 
+    gen_features: torch.tensor, 
+    feature_names: List[str],
+    n_components: int = 2,
+    perplexity: int = 30,
+):
+    pca = PCA(n_components=2)
+    pca_proj = pca.fit_transform(pooled.cpu().numpy())
+
+    tsne = TSNE(n_components=2, perplexity=30)
+    tsne_proj = tsne.fit_transform(pooled.cpu().numpy())
+    
+    for gen_feature in range(gen_features.shape[1]):
+        feature_name = feature_names[gen_feature]
+        plt.scatter(pca_proj[:, 0], pca_proj[:, 1], c=gen_features[:, gen_feature])
+        plt.title(f"PCA of encoder features, labeled by {feature_name}")
+        plt.show()
+
+        plt.scatter(tsne_proj[:, 0], tsne_proj[:, 1], c=gen_features[:, gen_feature])
+        plt.title(f"TSNE of encoder features, labeled by {feature_name}")
+        plt.show()
+
+
+def run_linear_probing(
+    pooled: torch.tensor,
+    gen_features: torch.tensor,
+    feature_names: List[str],
+    skip_features: Optional[List[str]] = None,
+    test_size: float = 0.2,
+    seed: int = 42,
+    visualize_weights: bool = False,
+):
+    X_train, X_test, y_train, y_test = train_test_split_tensors(pooled, gen_features, test_size=test_size, seed=seed)
+
+    for gen_feature in range(gen_features.shape[1]):
+        # Skip NaN features
+        feature_name = feature_names[gen_feature]
+        if skip_features and feature_name in skip_features:
+            continue
+        reg = LinearRegression()
+        reg.fit(X_train.cpu().numpy(), y_train[:, gen_feature].cpu().numpy())
+        score = reg.score(X_test.cpu().numpy(), y_test[:, gen_feature].cpu().numpy())
+        print(f"R² score for {feature_name}:", score)
+        if visualize_weights:
+            visualize_lin_reg_weights(reg, feature_name)
 
 
 @hydra.main(version_base="1.3", config_path="configs", config_name="config")
@@ -271,16 +346,10 @@ def analyze(cfg: DictConfig):
     print("depth features shape", depth_features.shape)
     print("sem features shape", sem_features.shape)
     print("features shape", features.shape)
+
     pooled = features.mean(dim=(-2, -1))
     print("pooled shape", pooled.shape)
 
-    # PCA
-    pca = PCA(n_components=2)
-    projected = pca.fit_transform(pooled.cpu().numpy())
-
-    # TSNE
-    tsne = TSNE(n_components=2, perplexity=30)
-    tsne_proj = tsne.fit_transform(pooled.cpu().numpy())
 
     # Plotting over generated features
     generated_features = torch.cat((depth_features, sem_features), axis=1)
@@ -297,30 +366,17 @@ def analyze(cfg: DictConfig):
         "road vs traversable ratio", "ground vs nonground ratio", "semantic entropy", "dominant loss"
     ]
     gen_feature_names = ["depth " + dfn for dfn in depth_feature_names] + sem_feature_names
-    """
-    noisy_features_predict = add_featurewise_noise(generated_features, scale=0.25)
-    noisy_features_score = add_featurewise_noise(generated_features, scale=0.25)
-    """
-    for gen_feature in range(gen_feature_count):
-        plt.scatter(projected[:, 0], projected[:, 1], c=generated_features[:, gen_feature])
-        plt.title(f"PCA of encoder features, labeled by {gen_feature_names[gen_feature]}")
-        plt.show()
 
-        plt.scatter(tsne_proj[:, 0], tsne_proj[:, 1], c=generated_features[:, gen_feature])
-        plt.title(f"TSNE of encoder features, labeled by {gen_feature_names[gen_feature]}")
-        plt.show()
+    visualize_pca_and_tsne(pooled, generated_features, gen_feature_names)
 
-        """
-        # Note: Linear Probing currently overfitting, more samples needed.
-        # Skip NaN features
-        if gen_feature_names[gen_feature] in ["depth skewness", "depth kurt"]:
-            continue
-        reg = LinearRegression()
-        reg.fit(pooled.cpu().numpy(), noisy_features_predict[:, gen_feature].cpu().numpy())
-        score = reg.score(pooled.cpu().numpy(), noisy_features_score[:, gen_feature].cpu().numpy())
-        print(f"R² score for {gen_feature_names[gen_feature]}:", score)
-        """
-
+    run_linear_probing(
+        pooled, 
+        generated_features, 
+        gen_feature_names, 
+        skip_features=["depth skewness", "depth kurt"], 
+        visualize_weights=True
+    )
+    
 
 if __name__ == '__main__':
     analyze()
