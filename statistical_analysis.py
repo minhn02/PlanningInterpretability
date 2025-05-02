@@ -19,16 +19,18 @@ from viplanner.viplanner.config.viplanner_sem_meta import VIPLANNER_SEM_META
 
 
 IMAGE_COUNT = 1000
-BATCH_SIZE = 25
+BATCH_SIZE = 50
 
 
-def get_image_batches(cfg: DictConfig)-> Tuple[torch.tensor, torch.tensor]:
+def get_image_batches(cfg: DictConfig) -> Tuple[torch.tensor, torch.tensor]:
     model_path = cfg.viplanner.model_path
     data_path = cfg.viplanner.data_path
     camera_cfg_path = cfg.viplanner.camera_cfg_path
     device = cfg.viplanner.device
 
     viplanner = viplanner_wrapper.VIPlannerAlgo(model_dir=model_path, device=device)
+
+    print("Loading images...")
 
     images = range(IMAGE_COUNT)
     depth_images = []
@@ -42,6 +44,109 @@ def get_image_batches(cfg: DictConfig)-> Tuple[torch.tensor, torch.tensor]:
     depth_img = torch.cat(depth_images, axis=0)
     sem_img = torch.cat(sem_images, axis=0)
     return depth_img, sem_img
+
+
+def get_goals(cfg: DictConfig) -> torch.tensor:
+    """
+    Get goals from config file.
+
+    Args:
+        cfg: config file
+
+    Returns:
+        torch.Tensor of shape [N, 3]
+    """
+    return torch.rand(IMAGE_COUNT, 3)
+
+
+def compute_activations(cfg: DictConfig, layer: str) -> torch.tensor:
+    """
+    Compute the activations of the provided images at a particular layer of the model.
+
+    Args:
+        cfg (DictConfig): config file
+        layer (str): A string representing the layer, must be one of
+            "encoder" or "decoder-n" for an int n in [1, 5].
+
+    Returns:
+        torch.tensor: the activations at the layer.
+    """
+    depth_img, sem_img = get_image_batches(cfg)
+    goal = get_goals(cfg)
+
+    print("processed depth size", depth_img.shape)
+    print("processed sem size", sem_img.shape)
+    print("goal size", goal.shape)
+    print(f"Computing activations for layer {layer}...")
+
+    # List of layer operations in planning network
+    model_path = cfg.viplanner.model_path
+    device = cfg.viplanner.device
+    viplanner = viplanner_wrapper.VIPlannerAlgo(model_dir=model_path, device=device)
+    decoder = viplanner.net.decoder
+    layers = [
+        lambda x: decoder.relu(decoder.conv1(x)),
+        lambda x: decoder.relu(decoder.conv2(x)),
+        lambda x: decoder.relu(decoder.fc1(torch.flatten(x, 1))),
+        lambda x: decoder.relu(decoder.fc2(x)),
+        lambda x: decoder.fc3(x).reshape(-1, decoder.k, 3),
+    ]
+
+    activation_batches = []
+    for i in range(IMAGE_COUNT // BATCH_SIZE):
+        with torch.no_grad():
+            print(f"Image {i * BATCH_SIZE} / {IMAGE_COUNT}")
+            batch_start = i * BATCH_SIZE
+            batch_end = (i+1) * BATCH_SIZE
+
+            # encode depth
+            x_depth = depth_img[batch_start:batch_end, :, :, :]
+            x_sem = sem_img[batch_start:batch_end, :, :, :]
+            x_depth = x_depth.expand(-1, 3, -1, -1)
+            x_depth = viplanner.net.encoder_depth(x_depth)
+
+            # encode sem
+            x_sem = viplanner.net.encoder_sem(x_sem)
+
+            # concat
+            x = torch.cat((x_depth, x_sem), dim=1)  # x.size = (N, 1024, 12, 20)
+
+            if layer == "encoder":
+                activation_batches.append(x)
+                continue
+            else:
+                # encode goal
+                goal_batch = decoder.fg(goal[batch_start:batch_end, 0:3])
+                goal_batch = goal_batch[:, :, None, None].expand(-1, -1, x.shape[2], x.shape[3])
+                x = torch.cat((x, goal_batch), dim=1)
+                layer_num = int(layer[-1])
+                for i in range(layer_num):
+                    x = layers[i](x)
+                activation_batches.append(x)
+
+    activations = torch.cat(activation_batches, axis=0)
+    return activations
+
+
+def get_activations(cfg: DictConfig, layer: str) -> torch.tensor:
+    """
+    Compute potentially cached activations at the given layer.
+
+    Args:
+        cfg (DictConfig): config file
+        layer (str): A string representing the layer, must be one of
+            "encoder" or "decoder-n" for an int n in [1, 6].
+
+    Returns:
+        torch.tensor: the activations at the layer.
+    """
+    if os.path.exists(f"checkpoints/{layer}.pt"):
+        activations = torch.load(f"checkpoints/{layer}.pt")
+    else:
+        activations = compute_activations(cfg, layer)
+        torch.save(activations, f"checkpoints/{layer}.pt")
+
+    return activations
 
 
 # This function was generated, in part, using ChatGPT
@@ -213,28 +318,45 @@ def compute_depth_features(depth_batch: torch.tensor, num_hist_bins: int = 20) -
     return features
 
 
-def get_features(cfg: DictConfig) -> torch.tensor:
-    depth_img, sem_img = get_image_batches(cfg)
-    print("processed depth size", depth_img.shape)
-    print("processed sem size", sem_img.shape)
+def get_features(cfg: DictConfig, feature_set: str) -> Tuple[torch.tensor, List[str]]:
+    """
+    Compute potentially cached features of a given type.
 
-    features_batches = []
-    for i in range(IMAGE_COUNT // BATCH_SIZE):
-        with torch.no_grad():
-            # encode depth
-            batch_start = i * BATCH_SIZE
-            batch_end = (i+1) * BATCH_SIZE
-            x_depth = depth_img[batch_start:batch_end, :, :, :]
-            x_sem = sem_img[batch_start:batch_end, :, :, :]
-            x_depth = x_depth.expand(-1, 3, -1, -1)
-            x_depth = viplanner.net.encoder_depth(x_depth)
-            # encode sem
-            x_sem = viplanner.net.encoder_sem(x_sem)
-            # concat
-            features = torch.cat((x_depth, x_sem), dim=1)  # x.size = (N, 1024, 12, 20)
-            features_batches.append(features)
-    features = torch.cat(features_batches, axis=0)
-    return features
+    Args:
+        cfg (DictConfig): config file
+        feature_set (str): the type of feature to load, can currently be either
+            "simple_depth" or "simple_semantic".
+
+    Returns:
+        torch.tensor: the features in question.
+        List[str]: the names of the features (has length equal to dimension 1 of above tensor).
+    """
+    feature_functions = {
+        "simple_depth": lambda cfg: compute_depth_features(get_image_batches(cfg)[0]),
+        "simple_semantic": lambda cfg: compute_semantic_features(get_image_batches(cfg)[1]),
+    }
+
+    feature_names = {
+        "simple_depth": [
+            "mean", "std", "min", "max", "skewness", "kurt", "0.1 quantile", 
+            "0.25 quantile", "0.5 quantile", "0.75 quantile", "0.9 quantile", 
+            "entropy", "grad x mean", "grad x std", "grad y mean", 
+            "grad y std", "grad mag mean", "grad mag std",
+        ],
+        "simple_semantic": [
+            "traversable intended prop", "traversable unintended prop", "terrain prop",
+            "road prop", "obstacle prop", "ground prop", "nonground prop", "obstacle vs traversable ratio",
+            "road vs traversable ratio", "ground vs nonground ratio", "semantic entropy", "dominant loss",
+        ]
+    }
+
+    if os.path.exists(f"checkpoints/{feature_set}.pt"):
+        features = torch.load(f"checkpoints/{feature_set}.pt")
+    else:
+        features = feature_functions[feature_set](cfg)
+        torch.save(features, f"checkpoints/{feature_set}.pt")
+
+    return features, feature_names[feature_set]
 
 
 # This function was generated, in part, using ChatGPT
@@ -261,8 +383,14 @@ def train_test_split_tensors(
 
 # This function was generated, in part, using ChatGPT
 def visualize_lin_reg_weights(reg: LinearRegression, feature_name: str):
+    reshapings = {
+        1024: (32, 32),
+        512: (16, 32),
+        256: (16, 16),
+        15: (5, 3),
+    }
     weights = np.asarray(reg.coef_)
-    heatmap = weights.reshape(32, 32)
+    heatmap = weights.reshape(reshapings[weights.shape[0]])
     plt.figure(figsize=(6, 6))
     plt.imshow(heatmap, cmap="viridis")
     plt.colorbar(label="Weight Magnitude")
@@ -319,62 +447,57 @@ def run_linear_probing(
         if visualize_weights:
             visualize_lin_reg_weights(reg, feature_name)
 
+def run_analysis(
+    cfg: DictConfig, 
+    layer: str, 
+    feature_set: str,
+    analysis_types: List[str]
+):
+    """
+    Performs analysis on a given layer and feature set
+
+    Args:
+        cfg (DictConfig): the config file.
+        layer (str): name of the layer to analyze.
+        feature_set (str): name of the feature set to analyze.
+        analysis_types (List[str]): list of types of analysis to perform, can include
+            "pca_tsne" and "linear_probing".
+    """
+    activations = get_activations(cfg, layer)
+    features, feature_names = get_features(cfg, feature_set)
+
+    print("activations shape", activations.shape)
+    print("features shape", features.shape)
+
+    if activations.ndim == 2:
+        pooled = activations
+    elif activations.ndim == 3:
+        pooled = activations.view(activations.size(0), -1)
+    else:
+        pooled = activations.mean(dim=(-2, -1))
+
+    print("pooled shape", pooled.shape)
+
+    if "pca_tsne" in analysis_types:
+        visualize_pca_and_tsne(pooled, features, feature_names)
+
+    if "linear_probing" in analysis_types:
+        run_linear_probing(
+            pooled, 
+            features, 
+            feature_names, 
+            skip_features=["skewness", "kurt"], 
+            visualize_weights=True
+        )
+
 
 @hydra.main(version_base="1.3", config_path="configs", config_name="config")
 def analyze(cfg: DictConfig):
-    # Compute features from embeddings and from hand analysis
-    if os.path.exists("checkpoints/features.pt"):
-        features = torch.load("checkpoints/features.pt")
-    else:
-        features = get_features(cfg)
-        torch.save(features, "checkpoints/features.pt")
-
-    if os.path.exists("checkpoints/depth_features.pt"):
-        depth_features = torch.load("checkpoints/depth_features.pt")
-    else:
-        depth_batch, sem_batch = get_image_batches(cfg)
-        depth_features = compute_depth_features(depth_batch)
-        torch.save(depth_features, "checkpoints/depth_features.pt")
-
-    if os.path.exists("checkpoints/sem_features.pt"):
-        sem_features = torch.load("checkpoints/sem_features.pt")
-    else:
-        depth_batch, sem_batch = get_image_batches(cfg)
-        sem_features = compute_semantic_features(sem_batch)
-        torch.save(sem_features, "checkpoints/sem_features.pt")
-
-    print("depth features shape", depth_features.shape)
-    print("sem features shape", sem_features.shape)
-    print("features shape", features.shape)
-
-    pooled = features.mean(dim=(-2, -1))
-    print("pooled shape", pooled.shape)
-
-
-    # Plotting over generated features
-    generated_features = torch.cat((depth_features, sem_features), axis=1)
-    _, gen_feature_count = generated_features.shape
-    depth_feature_names = [
-        "mean", "std", "min", "max", "skewness", "kurt", "0.1 quantile", 
-        "0.25 quantile", "0.5 quantile", "0.75 quantile", "0.9 quantile", 
-        "entropy", "grad x mean", "grad x std", "grad y mean", 
-        "grad y std", "grad mag mean", "grad mag std",
-    ]
-    sem_feature_names = [
-        "traversable intended prop", "traversable unintended prop", "terrain prop",
-        "road prop", "obstacle prop", "ground prop", "nonground prop", "obstacle vs traversable ratio",
-        "road vs traversable ratio", "ground vs nonground ratio", "semantic entropy", "dominant loss"
-    ]
-    gen_feature_names = ["depth " + dfn for dfn in depth_feature_names] + sem_feature_names
-
-    visualize_pca_and_tsne(pooled, generated_features, gen_feature_names)
-
-    run_linear_probing(
-        pooled, 
-        generated_features, 
-        gen_feature_names, 
-        skip_features=["depth skewness", "depth kurt"], 
-        visualize_weights=True
+    run_analysis(
+        cfg,
+        layer="decoder-1",
+        feature_set="simple_semantic",
+        analysis_types=["pca_tsne", "linear_probing"],
     )
     
 
