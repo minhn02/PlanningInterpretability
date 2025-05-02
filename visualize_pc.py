@@ -1,113 +1,243 @@
 import torch
-import viplanner_wrapper
 import hydra
 from omegaconf import DictConfig
 import matplotlib.pyplot as plt
-import torchvision
 import numpy as np
-from typing import Tuple
-from PIL import Image
 import scipy.spatial.transform as tf
-
-
-from viplanner.viplanner.traj_cost_opt.traj_cost import TrajCost
 import utils
-
 import open3d as o3d
 from viplanner.viplanner.config import VIPlannerSemMetaHandler
 
-def visualize_fov_point_cloud(fov_point_cloud, cam_pos, cam_quat=None, goal_pos=None):
+def visualize_semantic_top_down(fov_point_cloud, cam_pos=None, cam_quat=None, resolution=0.1, height_range=None, sem_handler=None, forward_axis="X+"):
     """
-    Visualize FOV point cloud using matplotlib
+    Create a top-down semantic map from the point cloud with class legend and camera position
     
     Args:
-        fov_point_cloud: open3d point cloud containing filtered points in FOV
-        cam_pos: Camera position [x, y, z]
-        cam_quat: Camera quaternion (optional) for orientation display
-        goal_pos: Goal position (optional)
+        fov_point_cloud: Point cloud with semantic colors
+        cam_pos: Optional camera position [x,y,z]
+        cam_quat: Optional camera orientation quaternion
+        resolution: Cell size in meters
+        height_range: Optional [min_height, max_height] to filter by height
+        sem_handler: Optional VIPlannerSemMetaHandler instance for class names
+        forward_axis: Which axis represents forward direction
+    
+    Returns:
+        fig, ax: The matplotlib figure and axes objects
     """
-    # Extract points and colors
     points = np.asarray(fov_point_cloud.points)
     colors = np.asarray(fov_point_cloud.colors)
     
     if len(points) == 0:
         print("No points to visualize")
-        return
+        fig = plt.figure(figsize=(10, 10))
+        ax = plt.gca()
+        plt.title("Top-Down Semantic View (No Points)")
+        return fig, ax
+        
+    # Filter by height if specified
+    if height_range is not None:
+        min_h, max_h = height_range
+        height_mask = (points[:, 2] >= min_h) & (points[:, 2] <= max_h)
+        points = points[height_mask]
+        colors = colors[height_mask]
+        
+        if len(points) == 0:
+            print(f"No points in height range [{min_h}, {max_h}]")
+            fig = plt.figure(figsize=(10, 10))
+            ax = plt.gca()
+            plt.title(f"Top-Down Semantic View (No Points in Height Range [{min_h}, {max_h}])")
+            return fig, ax
     
-    # Create 3D figure
-    fig = plt.figure(figsize=(12, 10))
-    ax = fig.add_subplot(111, projection='3d')
+    # Determine grid size based on point cloud bounds
+    x_min, y_min = np.min(points[:, :2], axis=0)
+    x_max, y_max = np.max(points[:, :2], axis=0)
     
-    # Plot points
-    ax.scatter(
-        points[:, 0], points[:, 1], points[:, 2],
-        c=colors,  # Use semantic colors
-        s=1,       # Point size
-        alpha=0.5  # Transparency
-    )
+    # Add padding to bounds
+    padding = max(2.0, resolution * 10)  # At least 2m or 10 cells
+    x_min -= padding
+    y_min -= padding
+    x_max += padding
+    y_max += padding
     
-    # Plot camera position
-    ax.scatter(
-        [cam_pos[0]], [cam_pos[1]], [cam_pos[2]],
-        color='blue',
-        s=100,
-        marker='^',
-        label='Camera'
-    )
+    print(f"X range: {x_min:.2f} to {x_max:.2f}, Y range: {y_min:.2f} to {y_max:.2f}")
     
-    # If we have camera orientation, draw a line showing the viewing direction
-    if cam_quat is not None:
-        # Convert quaternion to rotation matrix
-        rot = tf.Rotation.from_quat(cam_quat).as_matrix()
-        # Camera looks along positive Z-axis
-        # Create a viewing direction vector of length 5 units
-        view_dir = cam_pos + 5 * rot[:, 2]  # Use third column for forward direction
-        # Draw line from camera to view direction
-        ax.plot(
-            [cam_pos[0], view_dir[0]],
-            [cam_pos[1], view_dir[1]],
-            [cam_pos[2], view_dir[2]],
-            color='blue',
-            linewidth=2
-        )
+    # Create grid
+    grid_size_x = int((x_max - x_min) / resolution) + 1
+    grid_size_y = int((y_max - y_min) / resolution) + 1
     
-    # If goal position provided, plot it
-    if goal_pos is not None:
-        ax.scatter(
-            [goal_pos[0]], [goal_pos[1]], [goal_pos[2]],
-            color='red',
-            s=100,
-            marker='*',
-            label='Goal'
-        )
+    print(f"Creating top-down view with {grid_size_x} x {grid_size_y} cells")
     
-    # Get point cloud bounds with some padding
-    all_points = [points]
+    # Create empty semantic image
+    semantic_img = np.zeros((grid_size_y, grid_size_x, 3), dtype=np.uint8)
+    
+    # Track unique colors for legend
+    unique_colors_dict = {}
+    
+    # Project points to grid
+    for i, (point, color) in enumerate(zip(points, colors)):
+        grid_x = int((point[0] - x_min) / resolution)
+        # Flip y-axis for correct top-down orientation
+        grid_y = grid_size_y - 1 - int((point[1] - y_min) / resolution)
+        
+        # Ensure within bounds
+        if 0 <= grid_x < grid_size_x and 0 <= grid_y < grid_size_y:
+            # Convert from 0-1 range to 0-255
+            pixel_color = (color * 255).astype(np.uint8)
+            semantic_img[grid_y, grid_x] = pixel_color
+            
+            # Store color as tuple for legend lookup
+            color_key = tuple(pixel_color)
+            unique_colors_dict[color_key] = True
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 10))
+    
+    # Display the image
+    ax.imshow(semantic_img)
+    ax.set_title("Top-Down Semantic View")
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    
+    # Add camera position and direction if provided
     if cam_pos is not None:
-        all_points.append(np.array([cam_pos]))
-    if goal_pos is not None:
-        all_points.append(np.array([goal_pos]))
+        # Convert camera position to grid coordinates
+        cam_grid_x = int((cam_pos[0] - x_min) / resolution)
+        # Flip y-axis for camera position too
+        cam_grid_y = grid_size_y - 1 - int((cam_pos[1] - y_min) / resolution)
+        
+        # Check if camera is within grid bounds
+        if 0 <= cam_grid_x < grid_size_x and 0 <= cam_grid_y < grid_size_y:
+            # Draw camera as a marker
+            camera = ax.plot(cam_grid_x, cam_grid_y, 'bo', markersize=10, label='Camera Position')[0]
+            
+            # If we have orientation, add direction indicator
+            if cam_quat is not None:
+                # Get rotation matrix
+                rot = tf.Rotation.from_quat(cam_quat).as_matrix()
+                
+                # Get forward direction based on specified axis
+                if forward_axis == "X+":
+                    forward = rot[:, 0]
+                elif forward_axis == "Y+":
+                    forward = rot[:, 1]
+                elif forward_axis == "Z+":
+                    forward = rot[:, 2]
+                elif forward_axis == "X-":
+                    forward = -rot[:, 0]
+                elif forward_axis == "Y-":
+                    forward = -rot[:, 1]
+                else:  # Z-
+                    forward = -rot[:, 2]
+                
+                # Scale for visualization (5 meters)
+                arrow_length = int(5 / resolution)
+                
+                # Project to 2D (ignore z component)
+                dx = forward[0] * arrow_length
+                # Flip dy for top-down view
+                dy = -forward[1] * arrow_length
+                
+                # Draw arrow
+                ax.arrow(cam_grid_x, cam_grid_y, dx, dy, 
+                       head_width=arrow_length/5, 
+                       head_length=arrow_length/3, 
+                       fc='blue', 
+                       ec='blue',
+                       label='View Direction')
+        else:
+            print(f"Camera position ({cam_pos[0]:.2f}, {cam_pos[1]:.2f}) is outside the grid bounds")
+
+    # Create legend using semantic class information
+    legend_handles = []
     
-    all_points = np.vstack(all_points)
-    min_bounds = all_points.min(axis=0) - 1
-    max_bounds = all_points.max(axis=0) + 1
+    # If we have a semantic handler, use it to get class names
+    if sem_handler is not None:
+        # Create dictionary of normalized RGB tuple -> class name
+        color_to_class = {}
+        for class_name, rgb_color in sem_handler.class_color.items():
+            # Convert RGB to tuple for dictionary key
+            normalized_color = tuple(np.array(rgb_color) / 255.0)
+            color_to_class[normalized_color] = class_name
+        
+        # Match found colors to class names
+        for color_tuple in unique_colors_dict.keys():
+            normalized_tuple = tuple(np.array(color_tuple) / 255.0)
+            
+            # Find closest match in semantic handler colors
+            best_match = None
+            best_diff = float('inf')
+            
+            for known_color in color_to_class.keys():
+                diff = np.sum(np.abs(np.array(normalized_tuple) - np.array(known_color)))
+                if diff < best_diff:
+                    best_diff = diff
+                    best_match = known_color
+            
+            # If we found a close enough match
+            if best_diff < 0.1 and best_match in color_to_class:
+                class_name = color_to_class[best_match]
+                # Create patch for legend
+                color_patch = plt.Rectangle((0, 0), 1, 1, color=np.array(color_tuple) / 255.0)
+                legend_handles.append((color_patch, class_name))
     
-    # Set axis limits
-    ax.set_xlim([min_bounds[0], max_bounds[0]])
-    ax.set_ylim([min_bounds[1], max_bounds[1]])
-    ax.set_zlim([min_bounds[2], max_bounds[2]])
+    # If semantic handler not provided or no matches found, just use colors
+    if not legend_handles:
+        for i, color_tuple in enumerate(unique_colors_dict.keys()):
+            color_patch = plt.Rectangle((0, 0), 1, 1, color=np.array(color_tuple) / 255.0)
+            legend_handles.append((color_patch, f"Class {i+1}"))
     
-    # Set labels and title
-    ax.set_xlabel('X (m)')
-    ax.set_ylabel('Y (m)')
-    ax.set_zlabel('Z (m)')
-    ax.set_title(f'Camera FOV Point Cloud ({len(points)} points)')
+    # Sort legend entries by class name
+    legend_handles.sort(key=lambda x: x[1])
     
-    # Add legend
-    ax.legend()
+    # Add legend items for camera and view direction
+    if cam_pos is not None:
+        if cam_quat is not None:
+            # Add existing elements from legend_handles
+            legend_elements = [h for h, _ in legend_handles]
+            legend_names = [name for _, name in legend_handles]
+            
+            # Add camera position and view direction to legend
+            legend_elements.append(plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='b', markersize=10))
+            legend_names.append('Camera Position')
+            
+            # Add arrow to legend
+            legend_elements.append(plt.Line2D([0], [0], color='blue', lw=2))
+            legend_names.append(f'View Direction ({forward_axis})')
+            
+            # Create legend with all elements
+            ax.legend(legend_elements, legend_names, loc="upper right", bbox_to_anchor=(1.15, 1))
+        else:
+            # Just add camera position to existing legend
+            patches = [h for h, _ in legend_handles]
+            labels = [name for _, name in legend_handles]
+            
+            patches.append(plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='b', markersize=10))
+            labels.append('Camera Position')
+            
+            ax.legend(patches, labels, loc="upper right", bbox_to_anchor=(1.15, 1))
+    else:
+        # Use original legend
+        if legend_handles:
+            ax.legend([h for h, _ in legend_handles], 
+                      [name for _, name in legend_handles],
+                      loc="upper right",
+                      bbox_to_anchor=(1.15, 1))
     
-    # Show plot
+    # Add grid lines
+    grid_interval = max(1, int(grid_size_x / 10))
+    ax.set_xticks(np.arange(0, grid_size_x, grid_interval))
+    ax.set_yticks(np.arange(0, grid_size_y, grid_interval))
+    
+    # Add real-world coordinates
+    real_x_ticks = np.arange(0, grid_size_x, grid_interval) * resolution + x_min
+    real_y_ticks = np.arange(0, grid_size_y, grid_interval) * resolution + y_min
+    # Reverse y-tick labels to match flipped orientation
+    real_y_ticks = real_y_ticks[::-1]
+    ax.set_xticklabels([f"{x:.1f}" for x in real_x_ticks])
+    ax.set_yticklabels([f"{y:.1f}" for y in real_y_ticks])
+    
     plt.tight_layout()
+    plt.savefig("plots/top_down_semantic_view.png", dpi=300, bbox_inches="tight")
     plt.show()
     
     return fig, ax
@@ -156,15 +286,18 @@ def distance_to_class(pcd, goal_position, target_class_color, sem_handler):
     
     return min_distance, closest_point
 
-def get_points_in_view_cone(point_cloud, cam_pos, cam_quat, angle_deg=60, max_distance=15.0):
+def get_points_in_fov_with_intrinsics(point_cloud, cam_pos, cam_quat, K, img_width, img_height, forward_axis="X+", max_distance=15.0):
     """
-    Get points in a cone-shaped field of view from the camera
+    Get points in the field of view using camera intrinsics and the detected forward direction
     
     Args:
         point_cloud: Point cloud as o3d.geometry.PointCloud
         cam_pos: Camera position [x, y, z]
         cam_quat: Camera orientation quaternion [qx, qy, qz, qw]
-        angle_deg: Half-angle of the viewing cone in degrees
+        K: Camera intrinsic matrix
+        img_width: Image width in pixels
+        img_height: Image height in pixels
+        forward_axis: Which axis to use as forward direction (default "X+")
         max_distance: Maximum distance to consider
         
     Returns:
@@ -202,73 +335,85 @@ def get_points_in_view_cone(point_cloud, cam_pos, cam_quat, angle_deg=60, max_di
     
     print(f"Filtered to {len(points_rel)} points within {max_distance} meters")
     
-    # Normalize direction vectors
-    with np.errstate(divide='ignore', invalid='ignore'):
-        dir_vecs = points_rel / distances[:, np.newaxis]
+    # Create camera-aligned coordinate system based on the specified forward axis
+    # We need to map our detected forward direction to the Z-axis for standard projection
+    if forward_axis == "X+":
+        # For X+ forward, we need to swap axes: X->Z, Y->X, Z->Y
+        # This creates a transformation from world to camera-aligned frame
+        cam_to_standard = np.array([
+            [0, 1, 0],  # World Y becomes camera X
+            [0, 0, 1],  # World Z becomes camera Y
+            [1, 0, 0]   # World X becomes camera Z (forward)
+        ])
+    elif forward_axis == "X-":
+        cam_to_standard = np.array([
+            [0, -1, 0],  # -Y
+            [0, 0, 1],   # Z
+            [-1, 0, 0]   # -X -> Z
+        ])
+    # Add other axis mappings similarly
+    else:
+        # Default to standard Z-forward
+        cam_to_standard = np.eye(3)
     
-    # Replace NaNs with zeros
-    dir_vecs = np.nan_to_num(dir_vecs)
+    # Transform points to camera frame first
+    points_camera = (rot.T @ points_rel.T).T
     
-    # Try all possible axes as forward direction
-    axes = {
-        "Z+": rot[:, 2],      # Standard assumption
-        "X+": rot[:, 0],      # Alternative axes
-        "Y+": rot[:, 1],      
-        "Z-": -rot[:, 2],     # Inverted axes
-        "X-": -rot[:, 0],
-        "Y-": -rot[:, 1]
-    }
+    # Apply the camera-to-standard transformation
+    points_camera = (cam_to_standard @ points_camera.T).T
     
-    # Calculate minimum cosine for the FOV angle
-    min_cos = np.cos(np.radians(angle_deg))
+    # Filter points in front (positive Z after transformation)
+    front_indices = points_camera[:, 2] > 0
     
-    # Test all axes to find the one with most points
-    results = {}
-    for name, forward_vec in axes.items():
-        # Calculate dot product with this forward vector (cosine of angle)
-        cos_angles = np.dot(dir_vecs, forward_vec)
+    print(f"Found {np.sum(front_indices)} points in front of camera")
+    
+    if not np.any(front_indices):
+        return o3d.geometry.PointCloud()
         
-        # Find points within the cone for this axis
-        in_fov = cos_angles >= min_cos
-        count = np.sum(in_fov)
-        results[name] = (count, in_fov)
-        print(f"Using {name} as forward: {count} points in view cone")
+    points_camera = points_camera[front_indices]
+    points_world_filtered = points_world_filtered[front_indices]
+    colors_filtered = colors_filtered[front_indices]
     
-    # Find best axis
-    best_axis = max(results.keys(), key=lambda k: results[k][0])
-    best_count, best_in_fov = results[best_axis]
+    # Project to image plane (vectorized)
+    # Convert to homogeneous coordinates and normalize by z
+    points_normalized = points_camera / points_camera[:, 2:]
     
-    print(f"Best forward direction is {best_axis} with {best_count} points")
-    print(f"Using {best_axis} as forward direction")
+    # Apply camera intrinsics
+    pixel_coords = np.zeros((points_normalized.shape[0], 2))
+    pixel_coords[:, 0] = K[0, 0] * points_normalized[:, 0] + K[0, 2]
+    pixel_coords[:, 1] = K[1, 1] * points_normalized[:, 1] + K[1, 2]
     
-    # Create resulting point cloud
+    # Print pixel coordinate ranges for debugging
+    print(f"Pixel coordinates range: X [{pixel_coords[:, 0].min():.1f}, {pixel_coords[:, 0].max():.1f}], " +
+          f"Y [{pixel_coords[:, 1].min():.1f}, {pixel_coords[:, 1].max():.1f}]")
+    print(f"Image dimensions: {img_width} x {img_height}")
+    
+    # Filter points within image bounds (add small margin for near-edge points)
+    margin = 5  # 5-pixel margin
+    in_fov = (
+        (pixel_coords[:, 0] >= -margin) & 
+        (pixel_coords[:, 0] < img_width + margin) & 
+        (pixel_coords[:, 1] >= -margin) & 
+        (pixel_coords[:, 1] < img_height + margin)
+    )
+    
+    print(f"Found {np.sum(in_fov)} points in image bounds")
+    
+    # Create new point cloud with filtered points
     pcd_fov = o3d.geometry.PointCloud()
-    if best_count > 0:
-        pcd_fov.points = o3d.utility.Vector3dVector(points_world_filtered[best_in_fov])
-        pcd_fov.colors = o3d.utility.Vector3dVector(colors_filtered[best_in_fov])
-    
-    # As a fallback, if we found very few points, try with a wider angle
-    if best_count < 100 and angle_deg < 85:
-        print(f"Few points found ({best_count}), trying with wider angle")
-        wider_angle = min(angle_deg + 30, 85)
-        wider_pcd = get_points_in_view_cone(point_cloud, cam_pos, cam_quat, wider_angle, max_distance)
-        
-        if len(wider_pcd.points) > best_count:
-            print(f"Wider angle {wider_angle}° gave better results: {len(wider_pcd.points)} points")
-            return wider_pcd
+    if np.sum(in_fov) > 0:
+        pcd_fov.points = o3d.utility.Vector3dVector(points_world_filtered[in_fov])
+        pcd_fov.colors = o3d.utility.Vector3dVector(colors_filtered[in_fov])
     
     return pcd_fov
 
-def find_distances_in_fov(point_cloud, cam_pos, cam_quat, angle_deg, sem_handler, class_name=None, max_distance=15.0):
+def find_distances_in_fov(pcd_fov, cam_pos, sem_handler, class_name=None, max_distance=15.0):
     """
     Find distances to objects of a specific class within the camera's FOV
     
     Args:
-        point_cloud: The semantic point cloud
+        pcd_fov: The semantic point cloud in the camera's FOV
         cam_pos: Camera position in world frame
-        cam_quat: Camera orientation as quaternion
-        K: Camera intrinsic matrix
-        img_width, img_height: Image dimensions
         sem_handler: VIPlannerSemMetaHandler instance
         class_name: Target class name (optional)
         max_distance: Maximum distance to consider
@@ -277,9 +422,6 @@ def find_distances_in_fov(point_cloud, cam_pos, cam_quat, angle_deg, sem_handler
         If class_name provided: (min_distance, closest_point)
         If class_name not provided: dict of class names to (distance, point) tuples
     """
-    # Get points in FOV
-    pcd_fov = get_points_in_view_cone(point_cloud, cam_pos, cam_quat, angle_deg, max_distance)
-    
     # If no points in FOV
     if len(pcd_fov.points) == 0:
         if class_name:
@@ -312,38 +454,7 @@ def visualize_pc(cfg: DictConfig):
 
     img_num = 8
 
-    viplanner = viplanner_wrapper.VIPlannerAlgo(model_dir=model_path, device=device, eval=False)
-
-    # Load and process images from training data. Need to reshape to add batch dimension in front
-    depth_image, sem_image = viplanner_wrapper.preprocess_training_images(data_path, img_num, device)
-
-    # setup goal, also needs to have batch dimension in front
-    goals = torch.tensor([137, 111.0, 1.0], device=device).repeat(1, 1)
-    goals = viplanner_wrapper.transform_goal(camera_cfg_path, goals, img_num, device)
-
-    depth_image = viplanner.input_transformer(depth_image)
-    depth_image.requires_grad = True
-    sem_image.requires_grad = True
-
-    # forward/inference
-    _, paths, fear = viplanner.plan_dual(depth_image, sem_image, goals, no_grad=False)
-
-    cam_pos, cam_quat = utils.load_camera_extrinsics(camera_cfg_path, img_num, device=device)
-    odom = torch.cat([cam_pos, cam_quat], dim=1)
-
-    # cfg = viplanner.train_config
-    # traj_cost = TrajCost(
-    #             6,
-    #             log_data=True,
-    #             w_obs=cfg.w_obs,
-    #             w_height=cfg.w_height,
-    #             w_goal=cfg.w_goal,
-    #             w_motion=cfg.w_motion,
-    #             obstalce_thread=cfg.obstacle_thread)
-    # traj_cost.SetMap(data_path, cfg.cost_map_name)
-
-    # cost_map = traj_cost.cost_map
-    # Load point cloud and camera parameters
+    # TODO put this in the config
     pc_path = "/scratch/minh/school/282_project/carla/cloud.ply"
     point_cloud = o3d.io.read_point_cloud(pc_path)
     sem_handler = VIPlannerSemMetaHandler()
@@ -353,7 +464,7 @@ def visualize_pc(cfg: DictConfig):
     cam_pos = cam_pos.cpu().numpy().squeeze(0)
     cam_quat = cam_quat.cpu().numpy().squeeze(0)
 
-    # Define camera intrinsics
+    # Define camera intrinsics from the camera_intrinsics.txt file in carla folder
     K = np.array([
         [430.69473, 0,        424.0],
         [0,         430.69476, 240.0],
@@ -362,16 +473,27 @@ def visualize_pc(cfg: DictConfig):
     img_width, img_height = 848, 480
 
     # Get only the points in the camera's field of view
-    fov_point_cloud = get_points_in_view_cone(
-        point_cloud, 
-        cam_pos, 
-        cam_quat, 
-        angle_deg=60,  # Half-angle of the viewing cone
-        max_distance=15  # Optional distance limit
+    fov_point_cloud = get_points_in_fov_with_intrinsics(
+    point_cloud, 
+    cam_pos, 
+    cam_quat, 
+    K,
+    img_width, 
+    img_height,
+    forward_axis="X+",  # Use the detected best axis
+    max_distance=15
     )
 
-    fig, ax = visualize_fov_point_cloud(fov_point_cloud, cam_pos, cam_quat)
-    fig.savefig("fov_point_cloud.png", dpi=300)
+    # Visualize the results
+    fig, ax = visualize_semantic_top_down(
+        fov_point_cloud,
+        cam_pos=cam_pos,
+        cam_quat=cam_quat,
+        resolution=0.1,
+        height_range=[-1.5, 2.0],
+        sem_handler=sem_handler,
+        forward_axis="X+"
+    )
 
     # Find distances to specific class
     vehicle_dist, vehicle_point = distance_to_class(
@@ -384,10 +506,8 @@ def visualize_pc(cfg: DictConfig):
 
     # Or analyze all visible classes
     visible_objects = find_distances_in_fov(
-        point_cloud, 
+        fov_point_cloud,
         cam_pos, 
-        cam_quat,
-        60,
         sem_handler
     )
 
@@ -398,7 +518,6 @@ def visualize_pc(cfg: DictConfig):
     print("-" * 50)
     for class_name, (distance, point) in visible_objects.items():
         print(f"{class_name:<15} {distance:<15.2f} {point}")
-
 
 
 if __name__ == '__main__':
