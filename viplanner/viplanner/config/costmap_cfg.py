@@ -75,7 +75,7 @@ class ReconstructionCfg:
     # reconstruction parameters
     voxel_size: float = 0.1  # [m] 0.05 for matterport 0.1 for carla
     start_idx: int = 0  # start index for reconstruction
-    max_images: Optional[int] = 10  # maximum number of images to reconstruct, if None, all images are used
+    max_images: Optional[int] = 100  # maximum number of images to reconstruct, if None, all images are used
     depth_scale: float = 1000  # depth scale factor
     # semantic reconstruction
     semantics: bool = True
