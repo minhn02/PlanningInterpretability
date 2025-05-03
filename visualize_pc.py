@@ -10,7 +10,8 @@ from viplanner.viplanner.config import VIPlannerSemMetaHandler
 import viplanner_wrapper
 
 def visualize_semantic_top_down(fov_point_cloud, cam_pos=None, cam_quat=None, resolution=0.1, 
-                               height_range=None, sem_handler=None, forward_axis="X+", path=None):
+                               height_range=None, sem_handler=None, forward_axis="X+", path=None,
+                               fig_name="Top-Down Semantic View", file_name="top_down_semantic_view.png"):
     """
     Create a top-down semantic map from the point cloud with class legend and camera position
     
@@ -97,7 +98,7 @@ def visualize_semantic_top_down(fov_point_cloud, cam_pos=None, cam_quat=None, re
     
     # Display the image
     ax.imshow(semantic_img)
-    ax.set_title("Top-Down Semantic View")
+    ax.set_title(fig_name)
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     
@@ -106,6 +107,7 @@ def visualize_semantic_top_down(fov_point_cloud, cam_pos=None, cam_quat=None, re
     # =============================================
     if cam_pos is not None:
         # Convert camera position to grid coordinates
+        print(f"cam pos {cam_pos}")
         cam_grid_x = int((cam_pos[0] - x_min) / resolution)
         # Flip y-axis for camera position too
         cam_grid_y = grid_size_y - 1 - int((cam_pos[1] - y_min) / resolution)
@@ -135,7 +137,7 @@ def visualize_semantic_top_down(fov_point_cloud, cam_pos=None, cam_quat=None, re
                     forward = -rot[:, 2]
                 
                 # Scale for visualization (5 meters)
-                arrow_length = int(5 / resolution)
+                arrow_length = int(2 / resolution)
                 
                 # Project to 2D (ignore z component)
                 dx = forward[0] * arrow_length
@@ -144,8 +146,8 @@ def visualize_semantic_top_down(fov_point_cloud, cam_pos=None, cam_quat=None, re
                 
                 # Draw arrow
                 ax.arrow(cam_grid_x, cam_grid_y, dx, dy, 
-                       head_width=arrow_length/5, 
-                       head_length=arrow_length/3, 
+                       head_width=arrow_length/10, 
+                       head_length=arrow_length/6, 
                        fc='blue', 
                        ec='blue')
         else:
@@ -271,7 +273,7 @@ def visualize_semantic_top_down(fov_point_cloud, cam_pos=None, cam_quat=None, re
     ax.set_yticklabels([f"{y:.1f}" for y in real_y_ticks])
     
     plt.tight_layout()
-    plt.savefig("plots/top_down_semantic_view.png", dpi=300, bbox_inches="tight")
+    plt.savefig(file_name, dpi=300, bbox_inches="tight")
     plt.show()
     
     return fig, ax
@@ -485,7 +487,7 @@ def visualize_pc(cfg: DictConfig):
     data_path = cfg.viplanner.data_path
     camera_cfg_path = cfg.viplanner.camera_cfg_path
     device = cfg.viplanner.device
-    img_num = 25
+    img_num = 32
 
     viplanner = viplanner_wrapper.VIPlannerAlgo(model_dir=model_path, device=device, eval=True)
 
@@ -493,7 +495,7 @@ def visualize_pc(cfg: DictConfig):
     depth_image, sem_image = viplanner_wrapper.preprocess_training_images(data_path, img_num, device)
 
     # setup goal, also needs to have batch dimension in front
-    goals = torch.tensor([319, 266, 1.0], device=device).repeat(1, 1)
+    goals = torch.tensor([49, 152.5, 1.0], device=device).repeat(1, 1)
     goals = viplanner_wrapper.transform_goal(camera_cfg_path, goals, img_num, device=device)
     # goals = torch.tensor([5.0, -3, 0], device=device).repeat(1, 1)
 

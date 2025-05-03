@@ -81,7 +81,7 @@ def plot_saliency_map(grad, title, filename):
     # plt.colorbar()
     plt.title(title)
     plt.axis("off")
-    plt.savefig(filename, dpi=300)
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
     plt.close()
     
 @hydra.main(version_base="1.3", config_path="configs", config_name="config")
@@ -92,7 +92,7 @@ def guided_backprop(cfg: DictConfig):
     camera_cfg_path = cfg.viplanner.camera_cfg_path
     device = cfg.viplanner.device
 
-    img_num = 8
+    img_num = 32
 
     viplanner = viplanner_wrapper.VIPlannerAlgo(model_dir=model_path, device=device, eval=False)
     for i, module in enumerate(viplanner.net.modules()):
@@ -103,7 +103,7 @@ def guided_backprop(cfg: DictConfig):
     depth_image, sem_image = viplanner_wrapper.preprocess_training_images(data_path, img_num, device)
 
     # setup goal, also needs to have batch dimension in front
-    goals = torch.tensor([137, 111.0, 1.0], device=device).repeat(1, 1)
+    goals = torch.tensor([49, 152.5, 1.0], device=device).repeat(1, 1)
     goals = viplanner_wrapper.transform_goal(camera_cfg_path, goals, img_num, device)
 
     depth_image = viplanner.input_transformer(depth_image)
@@ -112,6 +112,7 @@ def guided_backprop(cfg: DictConfig):
 
     # forward/inference
     _, paths, fear = viplanner.plan_dual(depth_image, sem_image, goals, no_grad=False)
+    print(f"generated path with fear {fear}")
 
     cam_pos, cam_quat = utils.load_camera_extrinsics(camera_cfg_path, img_num, device=device)
     odom = torch.cat([cam_pos, cam_quat], dim=1)
@@ -142,15 +143,15 @@ def guided_backprop(cfg: DictConfig):
     depth_grad = depth_image.grad
     sem_grad = sem_image.grad
 
-    # print("depth grad: ", depth_grad)
+    print("depth grad: ", depth_grad)
     print("sem grad: ", sem_grad)
 
-    # plot_saliency_map(depth_grad, "Depth Gradient Saliency Map", "plots/depth_saliency_map.png")
-    # plot_saliency_map(sem_grad, "Semantic Gradient Saliency Map", "plots/sem_saliency_map.png")
+    plot_saliency_map(depth_grad, "Depth Gradient Saliency Map", "plots/depth_saliency_map.png")
+    plot_saliency_map(sem_grad, "Semantic Gradient Saliency Map", "plots/sem_saliency_map.png")
 
     # Save gradients as images
     # save_grad_as_image(depth_grad, "depth_saliency_map.png")
-    save_grad_as_image(sem_grad, "plots/sem_saliency_map.png")
+    # save_grad_as_image(sem_grad, "plots/sem_saliency_map.png")
 
 if __name__ == '__main__':
     guided_backprop()
