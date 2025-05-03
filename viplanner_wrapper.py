@@ -37,7 +37,7 @@ def preprocess_training_images(DATA_PATH: str, img_number: int, device):
     depth_image_file = f"{DATA_PATH}/depth/{img_number:04d}.npy"
     sem_image_file = f"{DATA_PATH}/semantics/{img_number:04d}.png"
     depth_image = np.load(depth_image_file)
-    depth_image = np.array(depth_image, dtype=np.float32)
+    depth_image = np.array(depth_image, dtype=np.float32) / 1000.0
     sem_image = np.array(Image.open(sem_image_file), dtype=np.float32)
     
     # turn into torch tensors
@@ -154,7 +154,7 @@ class VIPlannerAlgo:
         self, path_cam_frame: torch.Tensor, cam_pos: torch.Tensor, cam_quat: torch.Tensor
     ) -> torch.Tensor:
         """Transform path from camera frame to world frame."""
-        return self.quat_apply(
+        return quat_apply(
             cam_quat.unsqueeze(1).repeat(1, path_cam_frame.shape[1], 1), path_cam_frame
         ) + cam_pos.unsqueeze(1)
 
@@ -183,7 +183,7 @@ class VIPlannerAlgo:
         sem_image = self.transform(sem_image) / 255
         if no_grad:
             with torch.no_grad():
-                keypoints, fear = self.net(self.input_transformer(dep_image), sem_image, goal_robot_frame)
+                keypoints, fear = self.net(dep_image, sem_image, goal_robot_frame)
         else:
             keypoints, fear = self.net(dep_image, sem_image, goal_robot_frame)
         traj = self.traj_generate.TrajGeneratorFromPFreeRot(keypoints, step=0.1)

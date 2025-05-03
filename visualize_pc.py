@@ -7,8 +7,10 @@ import scipy.spatial.transform as tf
 import utils
 import open3d as o3d
 from viplanner.viplanner.config import VIPlannerSemMetaHandler
+import viplanner_wrapper
 
-def visualize_semantic_top_down(fov_point_cloud, cam_pos=None, cam_quat=None, resolution=0.1, height_range=None, sem_handler=None, forward_axis="X+"):
+def visualize_semantic_top_down(fov_point_cloud, cam_pos=None, cam_quat=None, resolution=0.1, 
+                               height_range=None, sem_handler=None, forward_axis="X+", path=None):
     """
     Create a top-down semantic map from the point cloud with class legend and camera position
     
@@ -20,6 +22,7 @@ def visualize_semantic_top_down(fov_point_cloud, cam_pos=None, cam_quat=None, re
         height_range: Optional [min_height, max_height] to filter by height
         sem_handler: Optional VIPlannerSemMetaHandler instance for class names
         forward_axis: Which axis represents forward direction
+        path: Optional path waypoints as array of shape (N, 3) for [x, y, z] coordinates
     
     Returns:
         fig, ax: The matplotlib figure and axes objects
@@ -90,7 +93,7 @@ def visualize_semantic_top_down(fov_point_cloud, cam_pos=None, cam_quat=None, re
             unique_colors_dict[color_key] = True
     
     # Create figure
-    fig, ax = plt.subplots(figsize=(12, 10))
+    fig, ax = plt.subplots(figsize=(16, 10))
     
     # Display the image
     ax.imshow(semantic_img)
@@ -98,7 +101,9 @@ def visualize_semantic_top_down(fov_point_cloud, cam_pos=None, cam_quat=None, re
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     
+    # =============================================
     # Add camera position and direction if provided
+    # =============================================
     if cam_pos is not None:
         # Convert camera position to grid coordinates
         cam_grid_x = int((cam_pos[0] - x_min) / resolution)
@@ -142,24 +147,58 @@ def visualize_semantic_top_down(fov_point_cloud, cam_pos=None, cam_quat=None, re
                        head_width=arrow_length/5, 
                        head_length=arrow_length/3, 
                        fc='blue', 
-                       ec='blue',
-                       label='View Direction')
+                       ec='blue')
         else:
             print(f"Camera position ({cam_pos[0]:.2f}, {cam_pos[1]:.2f}) is outside the grid bounds")
 
-    # Create legend using semantic class information
-    legend_handles = []
+    # ===========================
+    # Add path overlay if provided
+    # ===========================
+    path_grid_x = []
+    path_grid_y = []
     
-    # If we have a semantic handler, use it to get class names
+    if path is not None:
+        # Convert path to numpy if it's a tensor
+        if isinstance(path, torch.Tensor):
+            path = path.cpu().numpy()
+            
+        # Convert path points to grid coordinates
+        for point in path:
+            # Check if point is within bounds
+            if (x_min <= point[0] <= x_max) and (y_min <= point[1] <= y_max):
+                grid_x = int((point[0] - x_min) / resolution)
+                # Flip y-axis for path points too
+                grid_y = grid_size_y - 1 - int((point[1] - y_min) / resolution)
+                path_grid_x.append(grid_x)
+                path_grid_y.append(grid_y)
+        
+        if path_grid_x:  # Only plot if we have valid path points
+            # Plot path as line with markers
+            ax.plot(path_grid_x, path_grid_y, 'r-', linewidth=2.5, marker='o', 
+                   markersize=6, markerfacecolor='yellow', zorder=5)
+            
+            # Add path start and end markers
+            ax.plot(path_grid_x[0], path_grid_y[0], 'go', markersize=10)
+            ax.plot(path_grid_x[-1], path_grid_y[-1], 'mo', markersize=10)
+    
+    # ==================================
+    # Create consolidated legend contents
+    # ==================================
+    # Create legend items
+    legend_elements = []
+    legend_names = []
+    
+    # Process semantic classes with deduplication
     if sem_handler is not None:
-        # Create dictionary of normalized RGB tuple -> class name
+        # Create mapping between normalized colors and class names
         color_to_class = {}
         for class_name, rgb_color in sem_handler.class_color.items():
-            # Convert RGB to tuple for dictionary key
             normalized_color = tuple(np.array(rgb_color) / 255.0)
             color_to_class[normalized_color] = class_name
         
-        # Match found colors to class names
+        # Map detected colors to classes with deduplication
+        class_to_color = {}  # Maps class names to their canonical colors
+        
         for color_tuple in unique_colors_dict.keys():
             normalized_tuple = tuple(np.array(color_tuple) / 255.0)
             
@@ -176,54 +215,49 @@ def visualize_semantic_top_down(fov_point_cloud, cam_pos=None, cam_quat=None, re
             # If we found a close enough match
             if best_diff < 0.1 and best_match in color_to_class:
                 class_name = color_to_class[best_match]
-                # Create patch for legend
-                color_patch = plt.Rectangle((0, 0), 1, 1, color=np.array(color_tuple) / 255.0)
-                legend_handles.append((color_patch, class_name))
+                # Store canonical color for this class (if not already present)
+                if class_name not in class_to_color:
+                    class_to_color[class_name] = np.array(sem_handler.class_color[class_name]) / 255.0
     
-    # If semantic handler not provided or no matches found, just use colors
-    if not legend_handles:
+        # Create legend items for semantic classes
+        for class_name, color in sorted(class_to_color.items()):
+            legend_elements.append(plt.Rectangle((0, 0), 1, 1, color=color))
+            legend_names.append(class_name)
+    
+    # If no semantic classes found, use color-based legend
+    if not legend_elements and unique_colors_dict:
         for i, color_tuple in enumerate(unique_colors_dict.keys()):
-            color_patch = plt.Rectangle((0, 0), 1, 1, color=np.array(color_tuple) / 255.0)
-            legend_handles.append((color_patch, f"Class {i+1}"))
+            legend_elements.append(plt.Rectangle((0, 0), 1, 1, color=np.array(color_tuple) / 255.0))
+            legend_names.append(f"Class {i+1}")
     
-    # Sort legend entries by class name
-    legend_handles.sort(key=lambda x: x[1])
-    
-    # Add legend items for camera and view direction
+    # Add camera elements
     if cam_pos is not None:
+        legend_elements.append(plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='b', markersize=10))
+        legend_names.append('Camera Position')
+        
         if cam_quat is not None:
-            # Add existing elements from legend_handles
-            legend_elements = [h for h, _ in legend_handles]
-            legend_names = [name for _, name in legend_handles]
-            
-            # Add camera position and view direction to legend
-            legend_elements.append(plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='b', markersize=10))
-            legend_names.append('Camera Position')
-            
-            # Add arrow to legend
             legend_elements.append(plt.Line2D([0], [0], color='blue', lw=2))
             legend_names.append(f'View Direction ({forward_axis})')
-            
-            # Create legend with all elements
-            ax.legend(legend_elements, legend_names, loc="upper right", bbox_to_anchor=(1.15, 1))
-        else:
-            # Just add camera position to existing legend
-            patches = [h for h, _ in legend_handles]
-            labels = [name for _, name in legend_handles]
-            
-            patches.append(plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='b', markersize=10))
-            labels.append('Camera Position')
-            
-            ax.legend(patches, labels, loc="upper right", bbox_to_anchor=(1.15, 1))
-    else:
-        # Use original legend
-        if legend_handles:
-            ax.legend([h for h, _ in legend_handles], 
-                      [name for _, name in legend_handles],
-                      loc="upper right",
-                      bbox_to_anchor=(1.15, 1))
     
-    # Add grid lines
+    # Add path elements
+    if path is not None and path_grid_x:
+        legend_elements.append(plt.Line2D([0], [0], color='r', marker='o', 
+                              markersize=6, markerfacecolor='yellow', lw=2))
+        legend_names.append('Path')
+        
+        legend_elements.append(plt.Line2D([0], [0], marker='o', 
+                              markersize=8, markerfacecolor='g', color='w'))
+        legend_names.append('Path Start')
+        
+        legend_elements.append(plt.Line2D([0], [0], marker='o', 
+                              markersize=8, markerfacecolor='m', color='w'))
+        legend_names.append('Path End/Goal')
+    
+    # Create the legend
+    if legend_elements:
+        ax.legend(legend_elements, legend_names, loc="upper right", bbox_to_anchor=(1.15, 1))
+    
+    # Add grid lines and axis labels
     grid_interval = max(1, int(grid_size_x / 10))
     ax.set_xticks(np.arange(0, grid_size_x, grid_interval))
     ax.set_yticks(np.arange(0, grid_size_y, grid_interval))
@@ -451,8 +485,26 @@ def visualize_pc(cfg: DictConfig):
     data_path = cfg.viplanner.data_path
     camera_cfg_path = cfg.viplanner.camera_cfg_path
     device = cfg.viplanner.device
+    img_num = 25
 
-    img_num = 8
+    viplanner = viplanner_wrapper.VIPlannerAlgo(model_dir=model_path, device=device, eval=True)
+
+    # Load and process images from training data. Need to reshape to add batch dimension in front
+    depth_image, sem_image = viplanner_wrapper.preprocess_training_images(data_path, img_num, device)
+
+    # setup goal, also needs to have batch dimension in front
+    goals = torch.tensor([319, 266, 1.0], device=device).repeat(1, 1)
+    goals = viplanner_wrapper.transform_goal(camera_cfg_path, goals, img_num, device=device)
+    # goals = torch.tensor([5.0, -3, 0], device=device).repeat(1, 1)
+
+    depth_image = viplanner.input_transformer(depth_image)
+    print(f"depth image {depth_image}")
+
+    # forward/inference
+    _, paths, fear = viplanner.plan_dual(depth_image, sem_image, goals, no_grad=True)
+    print(f"Generated path with fear: {fear}")
+    cam_pos, cam_quat = utils.load_camera_extrinsics(camera_cfg_path, img_num, device=device)
+    path = viplanner.path_transformer(paths, cam_pos, cam_quat)
 
     # TODO put this in the config
     pc_path = "/scratch/minh/school/282_project/carla/cloud.ply"
@@ -492,7 +544,8 @@ def visualize_pc(cfg: DictConfig):
         resolution=0.1,
         height_range=[-1.5, 2.0],
         sem_handler=sem_handler,
-        forward_axis="X+"
+        forward_axis="X+",
+        path=path.cpu().numpy()[0]
     )
 
     # Find distances to specific class
