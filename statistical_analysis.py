@@ -2,6 +2,8 @@ import torch
 import viplanner_wrapper
 import hydra
 import os
+import contextlib
+import utils
 from omegaconf import DictConfig
 
 from typing import List, Optional, Tuple
@@ -14,10 +16,13 @@ import torch.nn.functional as F
 from scipy.stats import skew, kurtosis, entropy
 import numpy as np
 import matplotlib.pyplot as plt
+import open3d as o3d
 
-from generate_goal import generate_all_goals_tensor
+from generate_goal import generate_all_goals_tensor, generate_traversable_goal
 
-from viplanner.viplanner.config.viplanner_sem_meta import VIPLANNER_SEM_META
+from viplanner.viplanner.config.viplanner_sem_meta import VIPLANNER_SEM_META, OBSTACLE_LOSS
+from viplanner.viplanner.config import VIPlannerSemMetaHandler
+from visualize_pc import get_points_in_fov_with_intrinsics, find_distances_in_fov
 
 
 IMAGE_COUNT = 100
@@ -156,6 +161,76 @@ def get_activations(cfg: DictConfig, layer: str) -> torch.tensor:
         torch.save(activations, f"checkpoints/{layer}.pt")
 
     return activations
+
+def compute_distance_features(cfg: DictConfig) -> torch.tensor:
+    """
+    Compute min distance from goal to obstacles.
+
+    Args:
+        cfg (DictConfig): the config file.
+
+    Returns:
+        torch.tensor of shape [N, 1]
+    """
+    sem_handler = VIPlannerSemMetaHandler()
+    obstacle_names = []
+    for name, loss in sem_handler.class_loss.items():
+        if loss == OBSTACLE_LOSS:
+            obstacle_names.append(name)
+
+    features = []
+    for img_num in range(IMAGE_COUNT):
+        print(img_num)
+        if img_num == 42:
+            img_num = 100 # TEMP: Image 42 is low quality, so swap it for a better image
+        # Access configuration parameters
+        model_path = cfg.viplanner.model_path
+        data_path = cfg.viplanner.data_path
+        camera_cfg_path = cfg.viplanner.camera_cfg_path
+        point_cloud_path = cfg.viplanner.point_cloud_path
+        device = cfg.viplanner.device
+
+        point_cloud = o3d.io.read_point_cloud(point_cloud_path)
+        sem_handler = VIPlannerSemMetaHandler()
+
+        # Get camera parameters
+        cam_pos, cam_quat = utils.load_camera_extrinsics(camera_cfg_path, img_num, device=device)
+        cam_pos = cam_pos.cpu().numpy().squeeze(0)
+        cam_quat = cam_quat.cpu().numpy().squeeze(0)
+
+        # Define camera intrinsics from the camera_intrinsics.txt file in carla folder
+        K = np.array([
+            [430.69473, 0,        424.0],
+            [0,         430.69476, 240.0],
+            [0,         0,          1.0]
+        ])
+        img_width, img_height = 848, 480
+
+        with contextlib.redirect_stdout(None):
+            fov_point_cloud = get_points_in_fov_with_intrinsics(
+                point_cloud, 
+                cam_pos, 
+                cam_quat, 
+                K,
+                img_width, 
+                img_height,
+                forward_axis="X+",  # Use the detected best axis
+                max_distance=100
+            )
+            goal_point = generate_traversable_goal(
+                fov_point_cloud,
+                cam_pos,
+                sem_handler=sem_handler,
+                min_distance=2.0,  # At least 2 meters from camera
+                max_distance=10.0  # No more than 10 meters away
+            )
+            dist_dict = find_distances_in_fov(fov_point_cloud, goal_point, sem_handler)
+
+        obstacle_distances = [dist_dict[name][0] for name in dist_dict if name in obstacle_names]
+        min_dist = min(obstacle_distances)
+        features.append(torch.tensor(min_dist).repeat(1, 1))
+    features = torch.cat(features, axis=0)
+    return features
 
 
 # This function was generated, in part, using ChatGPT
@@ -334,7 +409,7 @@ def get_features(cfg: DictConfig, feature_set: str) -> Tuple[torch.tensor, List[
     Args:
         cfg (DictConfig): config file
         feature_set (str): the type of feature to load, can currently be either
-            "simple_depth" or "simple_semantic".
+            "simple_depth", "simple_semantic", or "distance".
 
     Returns:
         torch.tensor: the features in question.
@@ -343,6 +418,7 @@ def get_features(cfg: DictConfig, feature_set: str) -> Tuple[torch.tensor, List[
     feature_functions = {
         "simple_depth": lambda cfg: compute_depth_features(get_image_batches(cfg)[0]),
         "simple_semantic": lambda cfg: compute_semantic_features(get_image_batches(cfg)[1]),
+        "distance": compute_distance_features,
     }
 
     feature_names = {
@@ -356,7 +432,8 @@ def get_features(cfg: DictConfig, feature_set: str) -> Tuple[torch.tensor, List[
             "traversable intended prop", "traversable unintended prop", "terrain prop",
             "road prop", "obstacle prop", "ground prop", "nonground prop", "obstacle vs traversable ratio",
             "road vs traversable ratio", "ground vs nonground ratio", "semantic entropy", "dominant loss",
-        ]
+        ],
+        "distance": ["distance from nearest obstacle"],
     }
 
     if os.path.exists(f"checkpoints/{feature_set}.pt"):
@@ -507,7 +584,7 @@ def analyze(cfg: DictConfig):
         run_analysis(
             cfg,
             layer=layer,
-            feature_set="simple_semantic",
+            feature_set="distance",
             analysis_types=["pca_tsne", "linear_probing"],
         )
     
