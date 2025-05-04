@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy.spatial.transform as tf
 import utils
+import contextlib
 import open3d as o3d
 from viplanner.viplanner.config import VIPlannerSemMetaHandler
 import viplanner_wrapper
@@ -148,6 +149,7 @@ def generate_goal(cfg: DictConfig):
             min_distance=2.0,  # At least 2 meters from camera
             max_distance=10.0  # No more than 10 meters away
         )
+        print(goal_point)
 
         # Load and process images from training data. Need to reshape to add batch dimension in front
         depth_image, sem_image = viplanner_wrapper.preprocess_training_images(data_path, img_num, device)
@@ -179,6 +181,69 @@ def generate_goal(cfg: DictConfig):
             fig_name=f"goal_{img_num} with fear {fear.item():.2f}",
             file_name=f"plots/goal_{img_num}.png",
         )
+
+
+def generate_all_goals_tensor(cfg: DictConfig, image_count=1000):
+    # Access configuration parameters
+    model_path = cfg.viplanner.model_path
+    data_path = cfg.viplanner.data_path
+    camera_cfg_path = cfg.viplanner.camera_cfg_path
+    point_cloud_path = cfg.viplanner.point_cloud_path
+    device = cfg.viplanner.device
+
+    K = np.array([
+        [430.69473, 0,        424.0],
+        [0,         430.69476, 240.0],
+        [0,         0,          1.0]
+    ])
+    img_width, img_height = 848, 480
+
+    point_cloud = o3d.io.read_point_cloud(point_cloud_path)
+    sem_handler = VIPlannerSemMetaHandler()
+
+    viplanner = viplanner_wrapper.VIPlannerAlgo(model_dir=model_path, device=device, eval=True)
+
+    # Get camera parameters
+    goals = []
+    for img_num in range(image_count):
+        if img_num == 42:
+            img_num = 100 # TEMP: Image 42 is low quality, so swap it for a better image
+        cam_pos, cam_quat = utils.load_camera_extrinsics(camera_cfg_path, img_num, device="cpu")
+        cam_pos = cam_pos.cpu().numpy().squeeze(0)
+        cam_quat = cam_quat.cpu().numpy().squeeze(0)
+
+        with contextlib.redirect_stdout(None):
+            # Get only the points in the camera's field of view
+            fov_point_cloud = get_points_in_fov_with_intrinsics(
+                point_cloud, 
+                cam_pos, 
+                cam_quat, 
+                K,
+                img_width, 
+                img_height,
+                forward_axis="X+",  # Use the detected best axis
+                max_distance=15
+            )
+
+            goal_point = generate_traversable_goal(
+                fov_point_cloud,
+                cam_pos,
+                sem_handler=sem_handler,
+                min_distance=2.0,  # At least 2 meters from camera
+                max_distance=10.0  # No more than 10 meters away
+            )
+
+        # setup goal, also needs to have batch dimension in front
+        if goal_point is None:
+            goal_point = [5.3700, 0.2616, 0.1474] # Hardcoded average of images 1-100
+            print(f"No traversable terrain in image {img_num}, skipping...")
+        goal = torch.tensor(goal_point, device=device, dtype=torch.float32).repeat(1, 1)
+        goal = viplanner_wrapper.transform_goal(camera_cfg_path, goal, img_num, device=device)
+        goals.append(goal)
+
+    goals = torch.cat(goals, axis=0)
+    return goals
+
 
 if __name__ == '__main__':
     generate_goal()
