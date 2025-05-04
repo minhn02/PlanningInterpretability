@@ -110,7 +110,6 @@ class Decoder(nn.Module):
 
         c = self.relu(self.frc1(f))
         c = self.sigmoid(self.frc2(c))
-
         return x, c
 
 
