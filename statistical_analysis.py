@@ -15,10 +15,12 @@ from scipy.stats import skew, kurtosis, entropy
 import numpy as np
 import matplotlib.pyplot as plt
 
+from generate_goal import generate_all_goals_tensor
+
 from viplanner.viplanner.config.viplanner_sem_meta import VIPLANNER_SEM_META
 
 
-IMAGE_COUNT = 1000
+IMAGE_COUNT = 100
 BATCH_SIZE = 50
 
 
@@ -36,6 +38,8 @@ def get_image_batches(cfg: DictConfig) -> Tuple[torch.tensor, torch.tensor]:
     depth_images = []
     sem_images = []
     for n in images:
+        if n == 42:
+            n = 100 # TEMP: Image 42 is of low quality, so swap out for a better image
         depth_image, sem_image = viplanner_wrapper.preprocess_training_images(data_path, n, device)
         sem_image = viplanner.transform(sem_image) / 255
         depth_image = viplanner.input_transformer(depth_image)
@@ -56,7 +60,12 @@ def get_goals(cfg: DictConfig) -> torch.tensor:
     Returns:
         torch.Tensor of shape [N, 3]
     """
-    return torch.rand(IMAGE_COUNT, 3)
+    if os.path.exists(f"checkpoints/goals.pt"):
+        goals = torch.load(f"checkpoints/goals.pt")
+    else:
+        goals = generate_all_goals_tensor(cfg, IMAGE_COUNT)
+        torch.save(goals, f"checkpoints/goals.pt")
+    return goals
 
 
 def compute_activations(cfg: DictConfig, layer: str) -> torch.tensor:
@@ -493,12 +502,14 @@ def run_analysis(
 
 @hydra.main(version_base="1.3", config_path="configs", config_name="config")
 def analyze(cfg: DictConfig):
-    run_analysis(
-        cfg,
-        layer="decoder-1",
-        feature_set="simple_semantic",
-        analysis_types=["pca_tsne", "linear_probing"],
-    )
+    layers = ["encoder", "decoder-1", "decoder-2", "decoder-3", "decoder-4", "decoder-5"]
+    for layer in layers:
+        run_analysis(
+            cfg,
+            layer=layer,
+            feature_set="simple_semantic",
+            analysis_types=["pca_tsne", "linear_probing"],
+        )
     
 
 if __name__ == '__main__':
