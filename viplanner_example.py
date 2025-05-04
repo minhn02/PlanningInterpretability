@@ -12,6 +12,8 @@ def viplanner_eval(cfg: DictConfig):
     device = cfg.viplanner.device
 
     viplanner = viplanner_wrapper.VIPlannerAlgo(model_dir=model_path, device=device)
+    hook = viplanner.net.decoder.fc2.register_forward_hook(ablate_neuron_fc2())
+
 
     # Load and process images from training data. Need to reshape to add batch dimension in front
     depth_image, sem_image = viplanner_wrapper.preprocess_training_images(data_path, 8, device)
@@ -24,6 +26,11 @@ def viplanner_eval(cfg: DictConfig):
         depth_image, sem_image, goals
     )
     print(f"paths {paths}, fear {fear}")
+
+def ablate_neuron_fc2(module, input, output):
+    output = output.clone()
+    output[:, 100] = 0  # Zero out neuron 100
+    return output
 
 if __name__ == '__main__':
     viplanner_eval()

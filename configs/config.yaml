@@ -1,9 +1,9 @@
 viplanner:
-  model_path: "/scratch/minh/school/282_project/PlanningInterpretability/models"
-  data_path: "/scratch/minh/school/282_project/carla"
-  camera_cfg_path: "/scratch/minh/school/282_project/carla/camera_extrinsic.txt"
-  point_cloud_path: "/scratch/minh/school/282_project/carla/cloud.ply"
-  device: "cuda:6"
+  model_path: "/Users/ryan/Desktop/python/182/PlanningInterpretability/models"
+  data_path: "/Users/ryan/Desktop/python/182/carla"
+  camera_cfg_path: "/Users/ryan/Desktop/python/182/carla/camera_extrinsic.txt"
+  point_cloud_path: "/Users/ryan/Desktop/python/182/carla/cloud.ply"
+  device: "cpu"
 
 hydra:
   run:
