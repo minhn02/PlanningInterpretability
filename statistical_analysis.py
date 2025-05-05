@@ -585,7 +585,7 @@ def analyze(cfg: DictConfig):
             cfg,
             layer=layer,
             feature_set="distance",
-            analysis_types=["pca_tsne", "linear_probing"],
+            analysis_types=["linear_probing"],
         )
     
 

@@ -487,24 +487,50 @@ def visualize_pc(cfg: DictConfig):
     data_path = cfg.viplanner.data_path
     camera_cfg_path = cfg.viplanner.camera_cfg_path
     device = cfg.viplanner.device
-    img_num = 32
-
+    img_num = 16
     viplanner = viplanner_wrapper.VIPlannerAlgo(model_dir=model_path, device=device, eval=True)
 
     # Load and process images from training data. Need to reshape to add batch dimension in front
     depth_image, sem_image = viplanner_wrapper.preprocess_training_images(data_path, img_num, device)
 
     # setup goal, also needs to have batch dimension in front
-    goals = torch.tensor([49, 152.5, 1.0], device=device).repeat(1, 1)
+    goals = torch.tensor([268, 129, 0], device=device).repeat(1, 1)
     goals = viplanner_wrapper.transform_goal(camera_cfg_path, goals, img_num, device=device)
     # goals = torch.tensor([5.0, -3, 0], device=device).repeat(1, 1)
 
     depth_image = viplanner.input_transformer(depth_image)
     print(f"depth image {depth_image}")
 
+    def ablate_input_class(semantic_img, target_rgb, replacement_rgb=(0, 0, 0)):
+        """
+        Replace all pixels with a specific RGB color in a semantic image.
+
+        Args:
+            semantic_img (Tensor): (1, 3, H, W) float tensor with RGB values
+            target_rgb (tuple): RGB color to ablate, e.g. (127, 0, 255)
+            replacement_rgb (tuple): RGB color to replace with, default = (0, 0, 0)
+
+        Returns:
+            Tensor: Modified semantic image
+        """
+        sem = semantic_img.clone()
+        r, g, b = sem[0]
+
+        # Create mask where all 3 channels match the target RGB
+        mask = (r == target_rgb[0]) & (g == target_rgb[1]) & (b == target_rgb[2])
+
+        # Apply replacement color where mask is true
+        r[mask] = replacement_rgb[0]
+        g[mask] = replacement_rgb[1]
+        b[mask] = replacement_rgb[2]
+
+        return torch.stack([r, g, b], dim=0).unsqueeze(0)  # shape: (1, 3, H, W)
+
+    ablated = ablate_input_class(sem_image, [127, 0, 255], [255, 128, 0])
+
     # forward/inference run 1
     _, paths, fear = viplanner.plan_dual(depth_image, sem_image, goals, no_grad=True)
-    # print(f"Generated path with fear: {fear}")
+    print(f"Generated path with fear: {fear}")
     cam_pos, cam_quat = utils.load_camera_extrinsics(camera_cfg_path, img_num, device=device)
     path = viplanner.path_transformer(paths, cam_pos, cam_quat)
 
@@ -557,7 +583,7 @@ def visualize_pc(cfg: DictConfig):
                 - flatten     → [N, 256 * H', W']
                 - fc1         → [N, 1024]
                 - fc2         → [N, 512]
-                - fc3         → [N, k × 3] → reshaped to [N, k, 3] (3D waypoints)
+                - fc3         → [N, k x 3] → reshaped to [N, k, 3] (3D waypoints)
                 - frc1, frc2  → [N, 1] (fear/confidence)
 
         Notes:
@@ -572,26 +598,25 @@ def visualize_pc(cfg: DictConfig):
         - encoder_sem.layer4 / encoder_sem.resnet.layer4 → [N, 512, 12, 20]
         - decoder.fc1 / fc2           → [N, 1024], [N, 512]
         """
-
-
         output = output.clone()
-        output[0, 20, 5, 0] = 0.0
+        # output[0, 20, 5, 0] = 0.0
+        output[:, :] = 0
         return output
 
     # Zero out a neuron in a layer (here it's layer4 of depth encoder)
-    hook = viplanner.net.encoder_depth.layer4.register_forward_hook(ablate)
+    # hook = viplanner.net.decoder.fc1.register_forward_hook(ablate)
 
-    # forward/inference run 2
-    _, paths_ab, fear_ab = viplanner.plan_dual(depth_image, sem_image, goals, no_grad=True)
-    # print(f"Generated path with fear: {fear_ab}")
-    path_ab = viplanner.path_transformer(paths_ab, cam_pos, cam_quat)
+    # # # forward/inference run 2
+    # _, paths_ab, fear_ab = viplanner.plan_dual(depth_image, sem_image, goals, no_grad=True)
+    # # print(f"Generated path with fear: {fear_ab}")
+    # path_ab = viplanner.path_transformer(paths_ab, cam_pos, cam_quat)
 
-    plot_path(path_ab, camera_cfg_path, img_num)
+    # plot_path(path_ab, camera_cfg_path, img_num)
 
-    hook.remove()
-    diff = torch.norm(path - path_ab).item()
-    print(f"Path L2 difference: {diff:.6f}")
-    print(f"Fear delta: {fear_ab.item() - fear.item():.6f}")
+    # hook.remove()
+    # diff = torch.norm(path - path_ab).item()
+    # print(f"Path L2 difference: {diff:.6f}")
+    # print(f"Fear delta: {fear_ab.item() - fear.item():.6f}")
 
 def plot_path(path, camera_cfg_path, img_num):
     # TODO put this in the config

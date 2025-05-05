@@ -5,8 +5,8 @@ import hydra
 from omegaconf import DictConfig
 
 # Target class to filter by
-TARGET_CLASS = "building"
-MIN_PERCENTAGE = 0.1  # i.e. 40%
+TARGET_CLASS = "bench"
+MIN_PERCENTAGE = 0.15  # i.e. 40%
 
 # Class mappings
 OBSTACLE_LOSS = 2.0
@@ -272,6 +272,8 @@ def filter_images(cfg: DictConfig):
         percent = target_count / total_pixels
         if percent >= MIN_PERCENTAGE:
             selected_images.append(fname)
+        if len(selected_images) > 0:
+            break
 
     print(f"Found {len(selected_images)} images with mostly '{TARGET_CLASS}'")
 
