@@ -9,4 +9,7 @@ checkpoints/
 samples1000/
 carla/
 images/
-plots
+plots/
+plotsf/
+data/
+configs/

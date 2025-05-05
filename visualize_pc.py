@@ -11,7 +11,7 @@ import viplanner_wrapper
 
 def visualize_semantic_top_down(fov_point_cloud, cam_pos=None, cam_quat=None, resolution=0.1, 
                                height_range=None, sem_handler=None, forward_axis="X+", path=None,
-                               fig_name="Top-Down Semantic View", file_name="top_down_semantic_view.png"):
+                               fig_name="Top-Down Semantic View", file_name="plots/top_down_semantic_view.png"):
     """
     Create a top-down semantic map from the point cloud with class legend and camera position
     
@@ -273,7 +273,9 @@ def visualize_semantic_top_down(fov_point_cloud, cam_pos=None, cam_quat=None, re
     ax.set_yticklabels([f"{y:.1f}" for y in real_y_ticks])
     
     plt.tight_layout()
-    plt.savefig(file_name, dpi=300, bbox_inches="tight")
+    if file_name:
+        print(f"Saving figure to {file_name}")
+        plt.savefig(file_name, dpi=300, bbox_inches="tight")
     plt.show()
     
     return fig, ax
@@ -487,7 +489,9 @@ def visualize_pc(cfg: DictConfig):
     data_path = cfg.viplanner.data_path
     camera_cfg_path = cfg.viplanner.camera_cfg_path
     device = cfg.viplanner.device
-    img_num = 16
+    pc_path = cfg.viplanner.point_cloud_path
+    img_num = 32
+
     viplanner = viplanner_wrapper.VIPlannerAlgo(model_dir=model_path, device=device, eval=True)
 
     # Load and process images from training data. Need to reshape to add batch dimension in front
@@ -528,13 +532,11 @@ def visualize_pc(cfg: DictConfig):
 
     ablated = ablate_input_class(sem_image, [127, 0, 255], [255, 128, 0])
 
-    # forward/inference run 1
-    _, paths, fear = viplanner.plan_dual(depth_image, sem_image, goals, no_grad=True)
-    print(f"Generated path with fear: {fear}")
+    keypoints, paths, fear = viplanner.plan_dual(depth_image, sem_image, goals, no_grad=True)
     cam_pos, cam_quat = utils.load_camera_extrinsics(camera_cfg_path, img_num, device=device)
     path = viplanner.path_transformer(paths, cam_pos, cam_quat)
 
-    plot_path(path, camera_cfg_path, img_num)
+    plot_path(path, camera_cfg_path, pc_path, img_num)
 
     # Finds the largest activation
     def inspect(module, input, output):

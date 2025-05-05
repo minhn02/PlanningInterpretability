@@ -49,19 +49,17 @@ class DualAutoEncoder(nn.Module):
             self.decoder = Decoder(1024, train_cfg.in_channel, train_cfg.knodes)
         return
 
-    def forward(self, x_depth: torch.Tensor, x_sem: torch.Tensor, goal: torch.Tensor):
-        print("autoencoder depth shape", x_depth.shape)
-        print("autoencoder sem shape", x_sem.shape)
+    def forward(self, x_depth: torch.Tensor, x_sem: torch.Tensor, goal: torch.Tensor, ablate=None):
         # encode depth
         x_depth = x_depth.expand(-1, 3, -1, -1)
         x_depth = self.encoder_depth(x_depth)
         # encode sem
         x_sem = self.encoder_sem(x_sem)
         # concat
-        print("encoded depth shape", x_depth.shape)
-        print("encoded sem shape", x_sem.shape)
 
         x = torch.cat((x_depth, x_sem), dim=1)  # x.size = (N, 1024, 12, 20)
+        if ablate is not None:
+            x[:, ablate, :, :] = 0.0
         # decode
         x, c = self.decoder(x, goal)
         return x, c

@@ -17,6 +17,7 @@ from scipy.stats import skew, kurtosis, entropy
 import numpy as np
 import matplotlib.pyplot as plt
 import open3d as o3d
+import pickle
 
 from generate_goal import generate_all_goals_tensor, generate_traversable_goal
 
@@ -224,11 +225,15 @@ def compute_distance_features(cfg: DictConfig) -> torch.tensor:
                 min_distance=2.0,  # At least 2 meters from camera
                 max_distance=10.0  # No more than 10 meters away
             )
-            dist_dict = find_distances_in_fov(fov_point_cloud, goal_point, sem_handler)
+            goal_dist_dict = find_distances_in_fov(fov_point_cloud, goal_point, sem_handler)
+            cam_dist_dict = find_distances_in_fov(fov_point_cloud, cam_pos, sem_handler)
 
-        obstacle_distances = [dist_dict[name][0] for name in dist_dict if name in obstacle_names]
-        min_dist = min(obstacle_distances)
-        features.append(torch.tensor(min_dist).repeat(1, 1))
+        goal_obstacle_distances = [goal_dist_dict[name][0] for name in goal_dist_dict if name in obstacle_names]
+        cam_obstacle_distances = [cam_dist_dict[name][0] for name in cam_dist_dict if name in obstacle_names]
+        goal_min_dist = min(goal_obstacle_distances)
+        cam_min_dist = min(cam_obstacle_distances)
+        feature = [goal_min_dist, cam_min_dist, np.linalg.norm(goal_point - cam_pos)]
+        features.append(torch.tensor(feature).repeat(1, 1))
     features = torch.cat(features, axis=0)
     return features
 
@@ -433,7 +438,10 @@ def get_features(cfg: DictConfig, feature_set: str) -> Tuple[torch.tensor, List[
             "road prop", "obstacle prop", "ground prop", "nonground prop", "obstacle vs traversable ratio",
             "road vs traversable ratio", "ground vs nonground ratio", "semantic entropy", "dominant loss",
         ],
-        "distance": ["distance from nearest obstacle"],
+        "distance": [
+            "goal distance from nearest obstacle", "camera distance from nearest obstacle", 
+            "distance from camera to goal"
+        ],
     }
 
     if os.path.exists(f"checkpoints/{feature_set}.pt"):
@@ -468,7 +476,7 @@ def train_test_split_tensors(
 
 
 # This function was generated, in part, using ChatGPT
-def visualize_lin_reg_weights(reg: LinearRegression, feature_name: str):
+def visualize_lin_reg_weights(reg: LinearRegression, feature_name: str, layer=None):
     reshapings = {
         1024: (32, 32),
         512: (16, 32),
@@ -480,10 +488,11 @@ def visualize_lin_reg_weights(reg: LinearRegression, feature_name: str):
     plt.figure(figsize=(6, 6))
     plt.imshow(heatmap, cmap="viridis")
     plt.colorbar(label="Weight Magnitude")
-    plt.title(f"Linear Regression weights by channel for {feature_name}")
+    plt.title(f"Linear Regression weights by channel\nfor {feature_name} in {layer} layer")
     plt.axis('off')
     plt.tight_layout()
     plt.show()
+    plt.savefig(f"plots/{feature_name}_{layer}_weights.png", dpi=300)
 
 
 def visualize_pca_and_tsne(
@@ -510,6 +519,19 @@ def visualize_pca_and_tsne(
         plt.show()
 
 
+def find_top_k_weights_indices(weights, k=10):
+    """
+    Find the indices of the top k weights in a 1D array.
+
+    Args:
+        weights (np.ndarray): 1D array of weights
+        k (int): number of top weights to find
+
+    Returns:
+        np.ndarray: indices of the top k weights
+    """
+    return np.argsort(weights)[-k:][::-1]
+
 def run_linear_probing(
     pooled: torch.tensor,
     gen_features: torch.tensor,
@@ -518,6 +540,8 @@ def run_linear_probing(
     test_size: float = 0.2,
     seed: int = 42,
     visualize_weights: bool = False,
+    find_top_k_weights: bool = True,
+    layer=None,
 ):
     X_train, X_test, y_train, y_test = train_test_split_tensors(pooled, gen_features, test_size=test_size, seed=seed)
 
@@ -531,7 +555,17 @@ def run_linear_probing(
         score = reg.score(X_test.cpu().numpy(), y_test[:, gen_feature].cpu().numpy())
         print(f"R² score for {feature_name}:", score)
         if visualize_weights:
-            visualize_lin_reg_weights(reg, feature_name)
+            visualize_lin_reg_weights(reg, feature_name, layer=layer)
+        if find_top_k_weights:
+            weights = np.abs(reg.coef_)
+            weights_file = f"data/{feature_name}_{layer}_weights.pkl"
+            with open(weights_file, "wb") as f:
+                pickle.dump(weights, f)
+            top_k_indices = find_top_k_weights_indices(weights, k=800)
+            file_name = f"data/{feature_name}_{layer}_top_{len(top_k_indices)}_weights.pkl"
+            with open(file_name, "wb") as f:
+                pickle.dump(top_k_indices, f)
+            print(f"Top {len(top_k_indices)} weights for {feature_name} saved to {file_name}")
 
 def run_analysis(
     cfg: DictConfig, 
@@ -573,20 +607,33 @@ def run_analysis(
             features, 
             feature_names, 
             skip_features=["skewness", "kurt"], 
-            visualize_weights=True
+            visualize_weights=True,
+            layer=layer
         )
 
 
 @hydra.main(version_base="1.3", config_path="configs", config_name="config")
 def analyze(cfg: DictConfig):
     layers = ["encoder", "decoder-1", "decoder-2", "decoder-3", "decoder-4", "decoder-5"]
+    features = ["simple_depth", "simple_semantic", "distance"]
     for layer in layers:
+<<<<<<< HEAD
         run_analysis(
             cfg,
             layer=layer,
             feature_set="distance",
             analysis_types=["linear_probing"],
         )
+=======
+        for feature in features:
+            print(f"Layer: {layer}, feature: {feature}")
+            run_analysis(
+                cfg,
+                layer=layer,
+                feature_set=feature,
+                analysis_types=["pca_tsne", "linear_probing"],
+            )
+>>>>>>> 33703fb66d48bcda0249c942c662863dc5615681
     
 
 if __name__ == '__main__':
