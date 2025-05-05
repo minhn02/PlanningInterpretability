@@ -17,6 +17,7 @@ from scipy.stats import skew, kurtosis, entropy
 import numpy as np
 import matplotlib.pyplot as plt
 import open3d as o3d
+import pickle
 
 from generate_goal import generate_all_goals_tensor, generate_traversable_goal
 
@@ -475,7 +476,7 @@ def train_test_split_tensors(
 
 
 # This function was generated, in part, using ChatGPT
-def visualize_lin_reg_weights(reg: LinearRegression, feature_name: str):
+def visualize_lin_reg_weights(reg: LinearRegression, feature_name: str, layer=None):
     reshapings = {
         1024: (32, 32),
         512: (16, 32),
@@ -487,10 +488,11 @@ def visualize_lin_reg_weights(reg: LinearRegression, feature_name: str):
     plt.figure(figsize=(6, 6))
     plt.imshow(heatmap, cmap="viridis")
     plt.colorbar(label="Weight Magnitude")
-    plt.title(f"Linear Regression weights by channel for {feature_name}")
+    plt.title(f"Linear Regression weights by channel\nfor {feature_name} in {layer} layer")
     plt.axis('off')
     plt.tight_layout()
     plt.show()
+    plt.savefig(f"plots/{feature_name}_{layer}_weights.png", dpi=300)
 
 
 def visualize_pca_and_tsne(
@@ -517,6 +519,19 @@ def visualize_pca_and_tsne(
         plt.show()
 
 
+def find_top_k_weights_indices(weights, k=10):
+    """
+    Find the indices of the top k weights in a 1D array.
+
+    Args:
+        weights (np.ndarray): 1D array of weights
+        k (int): number of top weights to find
+
+    Returns:
+        np.ndarray: indices of the top k weights
+    """
+    return np.argsort(weights)[-k:][::-1]
+
 def run_linear_probing(
     pooled: torch.tensor,
     gen_features: torch.tensor,
@@ -525,6 +540,8 @@ def run_linear_probing(
     test_size: float = 0.2,
     seed: int = 42,
     visualize_weights: bool = False,
+    find_top_k_weights: bool = True,
+    layer=None,
 ):
     X_train, X_test, y_train, y_test = train_test_split_tensors(pooled, gen_features, test_size=test_size, seed=seed)
 
@@ -538,7 +555,17 @@ def run_linear_probing(
         score = reg.score(X_test.cpu().numpy(), y_test[:, gen_feature].cpu().numpy())
         print(f"R² score for {feature_name}:", score)
         if visualize_weights:
-            visualize_lin_reg_weights(reg, feature_name)
+            visualize_lin_reg_weights(reg, feature_name, layer=layer)
+        if find_top_k_weights:
+            weights = np.abs(reg.coef_)
+            weights_file = f"data/{feature_name}_{layer}_weights.pkl"
+            with open(weights_file, "wb") as f:
+                pickle.dump(weights, f)
+            top_k_indices = find_top_k_weights_indices(weights, k=800)
+            file_name = f"data/{feature_name}_{layer}_top_{len(top_k_indices)}_weights.pkl"
+            with open(file_name, "wb") as f:
+                pickle.dump(top_k_indices, f)
+            print(f"Top {len(top_k_indices)} weights for {feature_name} saved to {file_name}")
 
 def run_analysis(
     cfg: DictConfig, 
@@ -580,7 +607,8 @@ def run_analysis(
             features, 
             feature_names, 
             skip_features=["skewness", "kurt"], 
-            visualize_weights=True
+            visualize_weights=True,
+            layer=layer
         )
 
 

@@ -11,7 +11,7 @@ import viplanner_wrapper
 
 def visualize_semantic_top_down(fov_point_cloud, cam_pos=None, cam_quat=None, resolution=0.1, 
                                height_range=None, sem_handler=None, forward_axis="X+", path=None,
-                               fig_name="Top-Down Semantic View", file_name="top_down_semantic_view.png"):
+                               fig_name="Top-Down Semantic View", file_name="plots/top_down_semantic_view.png"):
     """
     Create a top-down semantic map from the point cloud with class legend and camera position
     
@@ -273,7 +273,9 @@ def visualize_semantic_top_down(fov_point_cloud, cam_pos=None, cam_quat=None, re
     ax.set_yticklabels([f"{y:.1f}" for y in real_y_ticks])
     
     plt.tight_layout()
-    plt.savefig(file_name, dpi=300, bbox_inches="tight")
+    if file_name:
+        print(f"Saving figure to {file_name}")
+        plt.savefig(file_name, dpi=300, bbox_inches="tight")
     plt.show()
     
     return fig, ax
@@ -487,6 +489,7 @@ def visualize_pc(cfg: DictConfig):
     data_path = cfg.viplanner.data_path
     camera_cfg_path = cfg.viplanner.camera_cfg_path
     device = cfg.viplanner.device
+    pc_path = cfg.viplanner.point_cloud_path
     img_num = 32
 
     viplanner = viplanner_wrapper.VIPlannerAlgo(model_dir=model_path, device=device, eval=True)
@@ -502,100 +505,13 @@ def visualize_pc(cfg: DictConfig):
     depth_image = viplanner.input_transformer(depth_image)
     print(f"depth image {depth_image}")
 
-    # forward/inference run 1
-    _, paths, fear = viplanner.plan_dual(depth_image, sem_image, goals, no_grad=True)
-    # print(f"Generated path with fear: {fear}")
+    keypoints, paths, fear = viplanner.plan_dual(depth_image, sem_image, goals, no_grad=True)
     cam_pos, cam_quat = utils.load_camera_extrinsics(camera_cfg_path, img_num, device=device)
     path = viplanner.path_transformer(paths, cam_pos, cam_quat)
 
-    plot_path(path, camera_cfg_path, img_num)
+    plot_path(path, camera_cfg_path, pc_path, img_num)
 
-    # Finds the largest activation
-    def inspect(module, input, output):
-        fc2_activations = output.detach().cpu().numpy()
-        # Get absolute values
-        abs_acts = np.abs(fc2_activations)
-
-        # Find max value and its index
-        max_idx_flat = np.argmax(abs_acts)
-        max_idx = np.unravel_index(max_idx_flat, abs_acts.shape)
-        max_val = abs_acts[max_idx]
-
-        print(f"Max magnitude value: {max_val}")
-        print(f"Index: {max_idx}")
-
-    # Ablates a specfic neuron
-    def ablate(module, input, output):
-        """
-        Layers:
-        encoder_depth (PlannerNet):
-            A ResNet-style CNN with 4 stages:
-                - conv1:     [N, 64, H/2,  W/2 ]
-                - maxpool:   [N, 64, H/4,  W/4 ]
-                - layer1:    [N, 64, H/4,  W/4 ]
-                - layer2:    [N, 128, H/8,  W/8 ]
-                - layer3:    [N, 256, H/16, W/16]
-                - layer4:    [N, 512, H/32, W/32] ← Output for depth path
-
-        encoder_sem:
-            - If `train_cfg.rgb` and `train_cfg.pre_train_sem`:
-                Uses pre-trained RGBEncoder
-                    - Output: [N, 512, H/32, W/32]
-            - Else:
-                Uses PlannerNet with same architecture as above
-                    - Output: [N, 512, H/32, W/32]
-
-        fusion:
-            Concatenates encoder outputs:
-                - [N, 1024, H/32, W/32] ← [depth 512 + sem 512]
-
-        decoder:
-            - Accepts fused feature map and a broadcasted goal vector
-            - Applies 2 conv layers (or 4 if using DecoderS), followed by fully connected layers:
-                - conv1:      [N, 512, ...]
-                - conv2:      [N, 256, ...]
-                - flatten     → [N, 256 * H', W']
-                - fc1         → [N, 1024]
-                - fc2         → [N, 512]
-                - fc3         → [N, k × 3] → reshaped to [N, k, 3] (3D waypoints)
-                - frc1, frc2  → [N, 1] (fear/confidence)
-
-        Notes:
-        ------
-        - The exact number of trajectory keypoints (`k`) is set via `train_cfg.knodes`
-        - Semantic encoder can be frozen if pre-trained (controlled by `train_cfg.pre_train_freeze`)
-        - All spatial dimensions are based on input resolution (typically [192, 320] → final [12, 20])
-
-        Recommended Hook Points for Activation Access:
-        ----------------------------------------------
-        - encoder_depth.layer4        → [N, 512, 12, 20]
-        - encoder_sem.layer4 / encoder_sem.resnet.layer4 → [N, 512, 12, 20]
-        - decoder.fc1 / fc2           → [N, 1024], [N, 512]
-        """
-
-
-        output = output.clone()
-        output[0, 20, 5, 0] = 0.0
-        return output
-
-    # Zero out a neuron in a layer (here it's layer4 of depth encoder)
-    hook = viplanner.net.encoder_depth.layer4.register_forward_hook(ablate)
-
-    # forward/inference run 2
-    _, paths_ab, fear_ab = viplanner.plan_dual(depth_image, sem_image, goals, no_grad=True)
-    # print(f"Generated path with fear: {fear_ab}")
-    path_ab = viplanner.path_transformer(paths_ab, cam_pos, cam_quat)
-
-    plot_path(path_ab, camera_cfg_path, img_num)
-
-    hook.remove()
-    diff = torch.norm(path - path_ab).item()
-    print(f"Path L2 difference: {diff:.6f}")
-    print(f"Fear delta: {fear_ab.item() - fear.item():.6f}")
-
-def plot_path(path, camera_cfg_path, img_num):
-    # TODO put this in the config
-    pc_path = "/Users/ryan/Desktop/python/182/carla/cloud.ply"
+def plot_path(path, camera_cfg_path, pc_path, img_num):
     point_cloud = o3d.io.read_point_cloud(pc_path)
     sem_handler = VIPlannerSemMetaHandler()
 

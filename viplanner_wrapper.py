@@ -177,15 +177,15 @@ class VIPlannerAlgo:
 
         return keypoints, traj, fear
 
-    def plan_dual(self, dep_image: torch.Tensor, sem_image: torch.Tensor, goal_robot_frame: torch.Tensor, no_grad=True) -> tuple:
+    def plan_dual(self, dep_image: torch.Tensor, sem_image: torch.Tensor, goal_robot_frame: torch.Tensor, no_grad=True, ablate=None) -> tuple:
         """Plan a trajectory using depth and semantic images."""
         # Transform input
         sem_image = self.transform(sem_image) / 255
         if no_grad:
             with torch.no_grad():
-                keypoints, fear = self.net(dep_image, sem_image, goal_robot_frame)
+                keypoints, fear = self.net(dep_image, sem_image, goal_robot_frame, ablate=ablate)
         else:
-            keypoints, fear = self.net(dep_image, sem_image, goal_robot_frame)
+            keypoints, fear = self.net(dep_image, sem_image, goal_robot_frame, ablate=ablate)
         traj = self.traj_generate.TrajGeneratorFromPFreeRot(keypoints, step=0.1)
 
         return keypoints, traj, fear
