@@ -224,11 +224,15 @@ def compute_distance_features(cfg: DictConfig) -> torch.tensor:
                 min_distance=2.0,  # At least 2 meters from camera
                 max_distance=10.0  # No more than 10 meters away
             )
-            dist_dict = find_distances_in_fov(fov_point_cloud, goal_point, sem_handler)
+            goal_dist_dict = find_distances_in_fov(fov_point_cloud, goal_point, sem_handler)
+            cam_dist_dict = find_distances_in_fov(fov_point_cloud, cam_pos, sem_handler)
 
-        obstacle_distances = [dist_dict[name][0] for name in dist_dict if name in obstacle_names]
-        min_dist = min(obstacle_distances)
-        features.append(torch.tensor(min_dist).repeat(1, 1))
+        goal_obstacle_distances = [goal_dist_dict[name][0] for name in goal_dist_dict if name in obstacle_names]
+        cam_obstacle_distances = [cam_dist_dict[name][0] for name in cam_dist_dict if name in obstacle_names]
+        goal_min_dist = min(goal_obstacle_distances)
+        cam_min_dist = min(cam_obstacle_distances)
+        feature = [goal_min_dist, cam_min_dist, np.linalg.norm(goal_point - cam_pos)]
+        features.append(torch.tensor(feature).repeat(1, 1))
     features = torch.cat(features, axis=0)
     return features
 
@@ -433,7 +437,10 @@ def get_features(cfg: DictConfig, feature_set: str) -> Tuple[torch.tensor, List[
             "road prop", "obstacle prop", "ground prop", "nonground prop", "obstacle vs traversable ratio",
             "road vs traversable ratio", "ground vs nonground ratio", "semantic entropy", "dominant loss",
         ],
-        "distance": ["distance from nearest obstacle"],
+        "distance": [
+            "goal distance from nearest obstacle", "camera distance from nearest obstacle", 
+            "distance from camera to goal"
+        ],
     }
 
     if os.path.exists(f"checkpoints/{feature_set}.pt"):
@@ -580,13 +587,16 @@ def run_analysis(
 @hydra.main(version_base="1.3", config_path="configs", config_name="config")
 def analyze(cfg: DictConfig):
     layers = ["encoder", "decoder-1", "decoder-2", "decoder-3", "decoder-4", "decoder-5"]
+    features = ["simple_depth", "simple_semantic", "distance"]
     for layer in layers:
-        run_analysis(
-            cfg,
-            layer=layer,
-            feature_set="distance",
-            analysis_types=["pca_tsne", "linear_probing"],
-        )
+        for feature in features:
+            print(f"Layer: {layer}, feature: {feature}")
+            run_analysis(
+                cfg,
+                layer=layer,
+                feature_set=feature,
+                analysis_types=["pca_tsne", "linear_probing"],
+            )
     
 
 if __name__ == '__main__':
