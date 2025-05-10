@@ -628,4 +628,7 @@ def analyze(cfg: DictConfig):
     
 
 if __name__ == '__main__':
+    os.makedirs("plots", exist_ok=True)
+    os.makedirs("checkpoints", exist_ok=True)
+    os.makedirs("data", exist_ok=True)
     analyze()

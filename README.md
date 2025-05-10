@@ -2,8 +2,8 @@
 
 ## Setup
 ### Downloading Pretrained Models
-1. Go to https://github.com/leggedrobotics/viplanner and download their model checkpoint and config (near the bottom of their README)
-2. create a directory named `models` and copy both of those files as `model.pt` and `model.yaml`
+1. Go to https://drive.google.com/file/d/1PY7XBkyIGESjdh1cMSiJgwwaIT0WaxIc/view?usp=sharing to download the latest viplanner model checkpoint
+2. copy this in the `models` folder as `model.pt`
 
 ### Local Setup
 Create a local conda environment with

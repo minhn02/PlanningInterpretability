@@ -8,6 +8,7 @@ from typing import Tuple
 from PIL import Image
 import open3d as o3d
 import scipy.spatial.transform as tf
+import os
 
 from viplanner.viplanner.traj_cost_opt.traj_cost import TrajCost
 from viplanner.viplanner.config import VIPlannerSemMetaHandler
@@ -77,6 +78,8 @@ def guided_backprop_multi(cfg: DictConfig):
     camera_cfg_path = cfg.viplanner.camera_cfg_path
     point_cloud_path = cfg.viplanner.point_cloud_path
     device = cfg.viplanner.device
+
+    os.makedirs("plots", exist_ok=True)
 
     # Define the image numbers to process
     img_numbers = [25]  # Example numbers - change as needed
