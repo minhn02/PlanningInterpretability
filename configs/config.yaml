@@ -1,8 +1,8 @@
 viplanner:
   model_path: "models"
-  data_path: "samples"
-  camera_cfg_path: "samples/camera_extrinsic.txt"
-  point_cloud_path: "samples/cloud.ply"
+  data_path: "carla"
+  camera_cfg_path: "carla/camera_extrinsic.txt"
+  point_cloud_path: "carla/cloud.ply"
   device: "cpu"
 
 hydra:

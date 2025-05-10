@@ -67,7 +67,7 @@ def neuron_ablations(cfg: DictConfig):
     camera_cfg_path = cfg.viplanner.camera_cfg_path
     device = cfg.viplanner.device
     pc_path = cfg.viplanner.point_cloud_path
-    img_num = 25
+    img_num = 16
     # interesting imgs: 46 and 16
 
     indices_file = "data/ground prop_encoder_top_100_weights.pkl"
@@ -81,7 +81,7 @@ def neuron_ablations(cfg: DictConfig):
 
     # setup goal, also needs to have batch dimension in front
     # goals = torch.tensor([89.0, 212.6, 0.0], device=device).repeat(1, 1)
-    goals = torch.tensor([317.5, 268.0, 0], device=device).repeat(1, 1)
+    goals = torch.tensor([270, 129.0, 0], device=device).repeat(1, 1)
     goals = viplanner_wrapper.transform_goal(camera_cfg_path, goals, img_num, device=device)
     # goals = torch.tensor([5.0, -3, 0], device=device).repeat(1, 1)
 
@@ -143,7 +143,7 @@ def neuron_ablations(cfg: DictConfig):
         forward_axis="X+",
         path=path.cpu().numpy()[0],
         fig_name="Top-Down View Before Activation Patching",
-        file_name=f"plotsf/top_down_view_before_patching_{img_num}.png"
+        file_name=f"plots/top_down_view_before_patching_{img_num}.png"
     )
 
     fig, ax = visualize_semantic_top_down(
@@ -156,7 +156,7 @@ def neuron_ablations(cfg: DictConfig):
         forward_axis="X+",
         path=path_ab.cpu().numpy()[0],
         fig_name=f"Top-Down View After Activation Patching",
-        file_name=f"plotsf/top_down_view_after_{len(ground_prop_indices)}_patching_{img_num}.png"
+        file_name=f"plots/top_down_view_after_{len(ground_prop_indices)}_patching_{img_num}.png"
     )
 
 @hydra.main(version_base="1.3", config_path="configs", config_name="config")
@@ -209,15 +209,15 @@ def sweep_ablations(cfg: DictConfig):
     plt.xlabel("Number of Activations Patched")
     plt.ylabel("Fear Value")
     plt.title("Number of Activations Patched vs Fear Value")
-    plt.savefig("plotsf/fear_vs_weights.png")
+    plt.savefig("plots/fear_vs_weights.png")
 
     plt.figure()
     plt.plot(range(0, 1001, 50), keypoint_diff)
     plt.xlabel("Number of Activations Patched")
     plt.ylabel("Keypoint Difference")
     plt.title("Number of Activations Patched vs Keypoint L2 Difference")
-    plt.savefig("plotsf/keypoint_diff_vs_weights.png")
+    plt.savefig("plots/keypoint_diff_vs_weights.png")
 
 if __name__ == '__main__':
     neuron_ablations()
-    # sweep_ablations()
+    sweep_ablations()
