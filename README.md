@@ -37,10 +37,28 @@ https://drive.google.com/file/d/1jWdIjuDi4zO6NCIXZ8qrX82zpqZfn3Ld/view?usp=shari
 
 Also drop this in the `carla` folder after uncompressing.
 
+At the end your `carla` folder should have: depth, maps, semantics, camera_extrinsic.txt, cloud.ply, and intrinsics.txt
+
 
 ## Reproducing Experiments
 
-### Statistical Analysis
+### Statistical Analysis + Linear Probing
 ```
 python statistical_analysis.py 
 ```
+
+This will display plots and dump `data` to be used in other experiments
+
+### Guided Backprop
+```
+python guided_backprop.py
+```
+
+This will display and dump plots into `plots`.
+
+## Neuron Patching
+```
+python neuron_ablations.py
+```
+
+These will dump plots into the `plots` folder.
