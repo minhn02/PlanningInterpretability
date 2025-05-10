@@ -67,7 +67,7 @@ def neuron_ablations(cfg: DictConfig):
     camera_cfg_path = cfg.viplanner.camera_cfg_path
     device = cfg.viplanner.device
     pc_path = cfg.viplanner.point_cloud_path
-    img_num = 16
+    img_num = 25
     # interesting imgs: 46 and 16
 
     indices_file = "data/ground prop_encoder_top_100_weights.pkl"
@@ -81,7 +81,7 @@ def neuron_ablations(cfg: DictConfig):
 
     # setup goal, also needs to have batch dimension in front
     # goals = torch.tensor([89.0, 212.6, 0.0], device=device).repeat(1, 1)
-    goals = torch.tensor([270, 129, 0], device=device).repeat(1, 1)
+    goals = torch.tensor([317.5, 268.0, 0], device=device).repeat(1, 1)
     goals = viplanner_wrapper.transform_goal(camera_cfg_path, goals, img_num, device=device)
     # goals = torch.tensor([5.0, -3, 0], device=device).repeat(1, 1)
 
@@ -220,4 +220,4 @@ def sweep_ablations(cfg: DictConfig):
 
 if __name__ == '__main__':
     neuron_ablations()
-    sweep_ablations()
+    # sweep_ablations()

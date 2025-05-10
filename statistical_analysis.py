@@ -617,14 +617,6 @@ def analyze(cfg: DictConfig):
     layers = ["encoder", "decoder-1", "decoder-2", "decoder-3", "decoder-4", "decoder-5"]
     features = ["simple_depth", "simple_semantic", "distance"]
     for layer in layers:
-<<<<<<< HEAD
-        run_analysis(
-            cfg,
-            layer=layer,
-            feature_set="distance",
-            analysis_types=["linear_probing"],
-        )
-=======
         for feature in features:
             print(f"Layer: {layer}, feature: {feature}")
             run_analysis(
@@ -633,7 +625,6 @@ def analyze(cfg: DictConfig):
                 feature_set=feature,
                 analysis_types=["pca_tsne", "linear_probing"],
             )
->>>>>>> 33703fb66d48bcda0249c942c662863dc5615681
     
 
 if __name__ == '__main__':

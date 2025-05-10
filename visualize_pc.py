@@ -536,7 +536,7 @@ def visualize_pc(cfg: DictConfig):
     cam_pos, cam_quat = utils.load_camera_extrinsics(camera_cfg_path, img_num, device=device)
     path = viplanner.path_transformer(paths, cam_pos, cam_quat)
 
-    plot_path(path, camera_cfg_path, pc_path, img_num)
+    plot_path(path, camera_cfg_path, img_num)
 
     # Finds the largest activation
     def inspect(module, input, output):
