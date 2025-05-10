@@ -1,8 +1,8 @@
 viplanner:
-  model_path: "/Users/ryan/Desktop/python/182/PlanningInterpretability/models"
-  data_path: "/Users/ryan/Desktop/python/182/carla"
-  camera_cfg_path: "/Users/ryan/Desktop/python/182/carla/camera_extrinsic.txt"
-  point_cloud_path: "/Users/ryan/Desktop/python/182/carla/cloud.ply"
+  model_path: "models"
+  data_path: "samples"
+  camera_cfg_path: "samples/camera_extrinsic.txt"
+  point_cloud_path: "samples/cloud.ply"
   device: "cpu"
 
 hydra:

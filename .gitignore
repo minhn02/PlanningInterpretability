@@ -7,9 +7,10 @@ viplanner/
 tags
 checkpoints/
 samples1000/
-carla/
 images/
 plots/
 plotsf/
 data/
 configs/
+*.ply
+maps
